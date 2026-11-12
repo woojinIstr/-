@@ -6,6 +6,9 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID, uuid4
 
+from .catalog import EXTRA_INGREDIENTS, RECIPES, RECIPE_INGREDIENTS
+from .meals import register_meal_routes
+
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +22,7 @@ SEEDS = [
     {'ingredient_id': '10000000-0000-4000-8000-000000000003', 'ingredient_name': '달걀', 'unit': 'count'},
 ]
 Unit = Literal['g', 'ml', 'count']
+SEEDS = SEEDS + EXTRA_INGREDIENTS
 Location = Literal['fridge', 'freezer', 'pantry']
 
 class StrictModel(BaseModel):
@@ -65,6 +69,14 @@ class LocalStore:
             CREATE INDEX IF NOT EXISTS inventory_owner ON inventory(user_id);
             ''')
             c.executemany('INSERT OR IGNORE INTO ingredients VALUES (:ingredient_id,:ingredient_name,:unit)', SEEDS)
+            c.executescript('''
+            CREATE TABLE IF NOT EXISTS recipes(recipe_id TEXT PRIMARY KEY, recipe_name TEXT NOT NULL, base_servings REAL NOT NULL CHECK(base_servings>0), cooking_time_minutes INTEGER NOT NULL CHECK(cooking_time_minutes>0), description TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS recipe_ingredients(recipe_id TEXT NOT NULL REFERENCES recipes(recipe_id), ingredient_id TEXT NOT NULL REFERENCES ingredients(ingredient_id), required_quantity REAL NOT NULL CHECK(required_quantity>0), unit TEXT NOT NULL CHECK(unit IN ('g','ml','count')), PRIMARY KEY(recipe_id,ingredient_id));
+            CREATE TABLE IF NOT EXISTS meals(meal_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, meal_date TEXT NOT NULL, meal_slot TEXT NOT NULL CHECK(meal_slot IN ('breakfast','lunch','dinner')), recipe_id TEXT NOT NULL REFERENCES recipes(recipe_id), servings REAL NOT NULL CHECK(servings>0 AND servings<=12), meal_status TEXT NOT NULL CHECK(meal_status IN ('planned','eating_out','cancelled')), version INTEGER NOT NULL CHECK(version>=0), created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS meals_owner_date ON meals(user_id,meal_date);
+            ''')
+            c.executemany('INSERT OR IGNORE INTO recipes VALUES (:recipe_id,:recipe_name,:base_servings,:cooking_time_minutes,:description)', RECIPES)
+            c.executemany('INSERT OR IGNORE INTO recipe_ingredients VALUES (:recipe_id,:ingredient_id,:required_quantity,:unit)', RECIPE_INGREDIENTS)
             c.commit()
 
     def request(self, method, table, token, params=None, data=None):
@@ -80,7 +92,7 @@ class LocalStore:
             c.execute('PRAGMA foreign_keys=ON')
             c.row_factory = sqlite3.Row
             if method == 'GET':
-                sql = f'SELECT * FROM {table}{where} ORDER BY ' + ('ingredient_id' if table == 'ingredients' else 'inventory_id')
+                sql = f'SELECT * FROM {table}{where} ORDER BY ' + {'ingredients':'ingredient_id','inventory':'inventory_id','recipes':'recipe_id','recipe_ingredients':'ingredient_id','meals':'meal_id'}[table]
                 sql += ' LIMIT ? OFFSET ?'
                 return [dict(r) for r in c.execute(sql, values + [int(params.get('limit',100)), int(params.get('offset',0))])]
             if method == 'POST':
@@ -126,7 +138,7 @@ def create_app(mode=None, db_path=None):
         url, key = os.getenv('SUPABASE_URL'), os.getenv('SUPABASE_PUBLISHABLE_KEY')
         if not url or not key or not url.startswith('https://'): raise RuntimeError('Set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY, or explicitly use APP_MODE=local')
         store = SupabaseStore(url, key)
-    app = FastAPI(title='다음한끼 Backend', version='0.1.0')
+    app = FastAPI(title='다음한끼 Backend', version='0.2.0')
     app.add_middleware(CORSMiddleware, allow_origins=os.getenv('CORS_ORIGINS','http://localhost:5173').split(','), allow_methods=['GET','POST','PATCH','DELETE'], allow_headers=['Authorization','Content-Type'])
     bearer = HTTPBearer(auto_error=False)
 
@@ -168,4 +180,5 @@ def create_app(mode=None, db_path=None):
         rows = store.request('DELETE','inventory',auth[1],{'inventory_id':'eq.'+str(inventory_id),'user_id':'eq.'+auth[0]})
         if not rows: raise HTTPException(404, '재고를 찾을 수 없습니다.')
         return Response(status_code=204)
+    register_meal_routes(app, store, identity)
     return app

@@ -1,6 +1,8 @@
-# 다음한끼 백엔드 — 0.1.0
+# 다음한끼 백엔드 — 0.2.0
 
-B 담당 2~4단계: FastAPI 기본 구조, 재료/재고 DB, 재고 등록·조회·수정·삭제.
+재고 CRUD에 메뉴 조회·식사 계획·외식·취소 API를 추가했습니다.
+
+**기존 v0.1 사용자: docs/upgrade-v0.2.md부터 확인하세요. 이미 적용한 001 SQL은 다시 실행하지 않습니다.**
 Python 3.11 이상 사용. 테스트 환경: Python 3.11+, requirements.txt에 기록된 패키지.
 
 ## Windows에서 실행
@@ -32,7 +34,7 @@ DELETE는 잘못 등록한 재고를 삭제합니다. 식사 연결 기능을 �
 로컬 모드는 localhost에서만 실행하세요. 실제 서비스에는 Supabase 모드를 사용합니다.
 
 ## Supabase 연결
-1. 전용 Supabase 프로젝트를 만들고 SQL Editor에서 migrations/001_inventory.sql을 한 번 실행합니다.
+1. 전용 Supabase 프로젝트를 만들고 SQL Editor에서 migrations/001_inventory.sql과 002_recipes_meals.sql을 순서대로 한 번씩 실행합니다.
 2. `.env`의 APP_MODE를 supabase로 바꿉니다.
 3. SUPABASE_URL과 SUPABASE_PUBLISHABLE_KEY를 본인 컴퓨터의 `.env`에 설정합니다. 관리자 키는 필요하지 않습니다.
 4. A/D 담당 로그인에서 받은 access_token을 API의 Authorization: Bearer 헤더로 전달합니다. /docs의 Authorize에도 토큰만 넣을 수 있습니다.
@@ -56,7 +58,8 @@ GET /health는 프로세스 확인용이며 DB 연결 성공을 의미하지 않
 
 ## 범위와 다음 단계
 - 구현: 서버, CORS, 입력 검증, 공통 재료 3개, 재고 CRUD, 로컬 영속 저장, Supabase REST/Auth 어댑터, SQL 및 RLS, 테스트, OpenAPI 명세.
-- 미구현: 식사 기록·조리 차감·장보기 계산·변경안·이력·AI·로그인 UI.
+- 추가 구현: 레시피 4개·식사 등록/조회/수정·외식/취소·버전 충돌 방지.
+- 미구현: 실제 조리 차감·장보기 서버 계산·변경안·이력·AI·로그인 UI 연결.
 - PATCH 수량은 증감량이 아닌 최종 잔량입니다. 동시 수정은 마지막 쓰기가 반영됩니다. 조리 차감 단계에서 트랜잭션·중복 처리 방지를 추가해야 합니다.
 - API 단위: g / ml / count. 구매 묶음은 서로 다른 inventory_id입니다. 재료 종류 ID는 C와 공유합니다.
 - 숫자는 JSON number, DB는 Supabase numeric. 향후 원가·정밀 계산은 Decimal 정책을 별도 확정합니다.
