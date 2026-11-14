@@ -1,0 +1,734 @@
+{
+  "ingredient.create": {
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "maxLength": 100,
+        "minLength": 1,
+        "title": "Name",
+        "type": "string"
+      },
+      "unit": {
+        "enum": [
+          "g",
+          "ml",
+          "count"
+        ],
+        "title": "Unit",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "unit"
+    ],
+    "title": "Ingredient",
+    "type": "object"
+  },
+  "recipe.save": {
+    "$defs": {
+      "Part": {
+        "additionalProperties": false,
+        "properties": {
+          "ingredient_id": {
+            "format": "uuid",
+            "title": "Ingredient Id",
+            "type": "string"
+          },
+          "quantity": {
+            "exclusiveMinimum": 0,
+            "maximum": 1000000000,
+            "title": "Quantity",
+            "type": "number"
+          },
+          "unit": {
+            "enum": [
+              "g",
+              "kg",
+              "ml",
+              "L",
+              "count"
+            ],
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ingredient_id",
+          "quantity",
+          "unit"
+        ],
+        "title": "Part",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Id"
+      },
+      "name": {
+        "maxLength": 100,
+        "minLength": 1,
+        "title": "Name",
+        "type": "string"
+      },
+      "base_servings": {
+        "maximum": 100,
+        "minimum": 0.1,
+        "title": "Base Servings",
+        "type": "number"
+      },
+      "minutes": {
+        "maximum": 1440,
+        "minimum": 1,
+        "title": "Minutes",
+        "type": "integer"
+      },
+      "description": {
+        "default": "",
+        "maxLength": 1000,
+        "title": "Description",
+        "type": "string"
+      },
+      "instructions": {
+        "default": "",
+        "maxLength": 10000,
+        "title": "Instructions",
+        "type": "string"
+      },
+      "ingredients": {
+        "items": {
+          "$ref": "#/$defs/Part"
+        },
+        "maxItems": 100,
+        "minItems": 1,
+        "title": "Ingredients",
+        "type": "array"
+      }
+    },
+    "required": [
+      "name",
+      "base_servings",
+      "minutes",
+      "ingredients"
+    ],
+    "title": "Recipe",
+    "type": "object"
+  },
+  "recipe.archive": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "format": "uuid",
+        "title": "Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "title": "Key",
+    "type": "object"
+  },
+  "recipe.restore": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "format": "uuid",
+        "title": "Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "title": "Key",
+    "type": "object"
+  },
+  "lot.create": {
+    "$defs": {
+      "Ingredient": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "unit": {
+            "enum": [
+              "g",
+              "ml",
+              "count"
+            ],
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "unit"
+        ],
+        "title": "Ingredient",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "ingredient_id": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Ingredient Id"
+      },
+      "new_ingredient": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Ingredient"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "product_id": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Product Id"
+      },
+      "name": {
+        "default": "",
+        "maxLength": 100,
+        "title": "Name",
+        "type": "string"
+      },
+      "input_quantity": {
+        "exclusiveMinimum": 0,
+        "maximum": 1000000000,
+        "title": "Input Quantity",
+        "type": "number"
+      },
+      "input_unit": {
+        "enum": [
+          "g",
+          "kg",
+          "ml",
+          "L",
+          "count",
+          "pack"
+        ],
+        "title": "Input Unit",
+        "type": "string"
+      },
+      "pack_size": {
+        "anyOf": [
+          {
+            "exclusiveMinimum": 0,
+            "maximum": 1000000000,
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Pack Size"
+      },
+      "content_unit": {
+        "default": "g",
+        "enum": [
+          "g",
+          "kg",
+          "ml",
+          "L",
+          "count"
+        ],
+        "title": "Content Unit",
+        "type": "string"
+      },
+      "pack_label": {
+        "default": "팩",
+        "maxLength": 20,
+        "minLength": 1,
+        "title": "Pack Label",
+        "type": "string"
+      },
+      "save_product": {
+        "default": false,
+        "title": "Save Product",
+        "type": "boolean"
+      },
+      "estimated": {
+        "default": false,
+        "title": "Estimated",
+        "type": "boolean"
+      },
+      "storage": {
+        "default": "fridge",
+        "enum": [
+          "fridge",
+          "freezer",
+          "pantry"
+        ],
+        "title": "Storage",
+        "type": "string"
+      },
+      "purchased_on": {
+        "format": "date",
+        "title": "Purchased On",
+        "type": "string"
+      },
+      "expires_on": {
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Expires On"
+      },
+      "opened_on": {
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Opened On"
+      },
+      "manual_id": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Manual Id"
+      }
+    },
+    "required": [
+      "input_quantity",
+      "input_unit",
+      "purchased_on"
+    ],
+    "title": "Lot",
+    "type": "object"
+  },
+  "lot.patch": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "format": "uuid",
+        "title": "Id",
+        "type": "string"
+      },
+      "quantity": {
+        "maximum": 1000000000,
+        "minimum": 0,
+        "title": "Quantity",
+        "type": "number"
+      },
+      "storage": {
+        "enum": [
+          "fridge",
+          "freezer",
+          "pantry"
+        ],
+        "title": "Storage",
+        "type": "string"
+      },
+      "name": {
+        "default": "",
+        "maxLength": 100,
+        "title": "Name",
+        "type": "string"
+      },
+      "purchased_on": {
+        "format": "date",
+        "title": "Purchased On",
+        "type": "string"
+      },
+      "expires_on": {
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Expires On"
+      },
+      "opened_on": {
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Opened On"
+      }
+    },
+    "required": [
+      "id",
+      "quantity",
+      "storage",
+      "purchased_on"
+    ],
+    "title": "LotPatch",
+    "type": "object"
+  },
+  "lot.archive": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "format": "uuid",
+        "title": "Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "title": "Key",
+    "type": "object"
+  },
+  "lot.restore": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "format": "uuid",
+        "title": "Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "title": "Key",
+    "type": "object"
+  },
+  "lot.use": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "format": "uuid",
+        "title": "Id",
+        "type": "string"
+      },
+      "quantity": {
+        "exclusiveMinimum": 0,
+        "maximum": 1000000000,
+        "title": "Quantity",
+        "type": "number"
+      },
+      "reason": {
+        "enum": [
+          "use",
+          "waste"
+        ],
+        "title": "Reason",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id",
+      "quantity",
+      "reason"
+    ],
+    "title": "Use",
+    "type": "object"
+  },
+  "meal.save": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Id"
+      },
+      "date": {
+        "format": "date",
+        "title": "Date",
+        "type": "string"
+      },
+      "slot": {
+        "enum": [
+          "breakfast",
+          "lunch",
+          "dinner"
+        ],
+        "title": "Slot",
+        "type": "string"
+      },
+      "recipe_id": {
+        "format": "uuid",
+        "title": "Recipe Id",
+        "type": "string"
+      },
+      "servings": {
+        "maximum": 12,
+        "minimum": 0.1,
+        "title": "Servings",
+        "type": "number"
+      },
+      "repeat_days": {
+        "default": 1,
+        "maximum": 31,
+        "minimum": 1,
+        "title": "Repeat Days",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "date",
+      "slot",
+      "recipe_id",
+      "servings"
+    ],
+    "title": "Meal",
+    "type": "object"
+  },
+  "meal.state": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "format": "uuid",
+        "title": "Id",
+        "type": "string"
+      },
+      "status": {
+        "enum": [
+          "eating_out",
+          "cancelled",
+          "planned"
+        ],
+        "title": "Status",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id",
+      "status"
+    ],
+    "title": "MealState",
+    "type": "object"
+  },
+  "meal.copy": {
+    "additionalProperties": false,
+    "properties": {
+      "source_date": {
+        "format": "date",
+        "title": "Source Date",
+        "type": "string"
+      },
+      "days": {
+        "maximum": 31,
+        "minimum": 1,
+        "title": "Days",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "source_date",
+      "days"
+    ],
+    "title": "CopyDay",
+    "type": "object"
+  },
+  "meal.cook": {
+    "$defs": {
+      "Part": {
+        "additionalProperties": false,
+        "properties": {
+          "ingredient_id": {
+            "format": "uuid",
+            "title": "Ingredient Id",
+            "type": "string"
+          },
+          "quantity": {
+            "exclusiveMinimum": 0,
+            "maximum": 1000000000,
+            "title": "Quantity",
+            "type": "number"
+          },
+          "unit": {
+            "enum": [
+              "g",
+              "kg",
+              "ml",
+              "L",
+              "count"
+            ],
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ingredient_id",
+          "quantity",
+          "unit"
+        ],
+        "title": "Part",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "format": "uuid",
+        "title": "Id",
+        "type": "string"
+      },
+      "usage": {
+        "items": {
+          "$ref": "#/$defs/Part"
+        },
+        "maxItems": 100,
+        "minItems": 1,
+        "title": "Usage",
+        "type": "array"
+      }
+    },
+    "required": [
+      "id",
+      "usage"
+    ],
+    "title": "Cook",
+    "type": "object"
+  },
+  "shopping.add": {
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "maxLength": 100,
+        "minLength": 1,
+        "title": "Name",
+        "type": "string"
+      },
+      "quantity": {
+        "exclusiveMinimum": 0,
+        "maximum": 1000000000,
+        "title": "Quantity",
+        "type": "number"
+      },
+      "unit": {
+        "maxLength": 20,
+        "minLength": 1,
+        "title": "Unit",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "quantity",
+      "unit"
+    ],
+    "title": "Manual",
+    "type": "object"
+  },
+  "shopping.check": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "format": "uuid",
+        "title": "Id",
+        "type": "string"
+      },
+      "checked": {
+        "title": "Checked",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "id",
+      "checked"
+    ],
+    "title": "CheckManual",
+    "type": "object"
+  },
+  "shopping.archive": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "format": "uuid",
+        "title": "Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "title": "Key",
+    "type": "object"
+  },
+  "shopping.restore": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "format": "uuid",
+        "title": "Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "title": "Key",
+    "type": "object"
+  }
+}
