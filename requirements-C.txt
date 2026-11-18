@@ -1,0 +1,2 @@
+# Add this to B backend requirements.txt on integration.
+openai>=1.68,<3
