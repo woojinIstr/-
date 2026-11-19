@@ -22,9 +22,10 @@ test('integrated screen with real FastAPI: packages, custom recipe, cooking, sho
   await new Promise((resolve,reject)=>{server.stderr.on('data',c=>{if(c.toString().includes('Application startup complete'))resolve();});server.once('exit',code=>reject(Error('Server exited '+code)));setTimeout(()=>reject(Error('Server startup timeout')),15000).unref();});
   await build({entryPoints:['src/IntegratedApp.jsx'],outfile:output.pathname,bundle:true,platform:'node',format:'esm',external:['react','lucide-react'],define:{'import.meta.env':'{}'}});
   const App=(await import(output.href)).default;
-  let loseDirectReply=false,previewCount=0;
+  let loseDirectReply=false,previewCount=0,holdRecommendation=null;
   global.fetch=async(url,options)=>{
    if(url==='/app-config')return {ok:true,json:async()=>({mode:'local',url:'',key:'',api:base})};
+   if(url.endsWith('/v3/gpt-recommendations')&&holdRecommendation)await holdRecommendation;
    if(url.includes('/v3/preview'))previewCount++;
    const response=await realFetch(url,options);
    if(loseDirectReply&&url.endsWith('/v3/commands')){loseDirectReply=false;throw new TypeError('시험용 응답 유실');}
@@ -158,8 +159,14 @@ test('integrated screen with real FastAPI: packages, custom recipe, cooking, sho
   fill('식사 시간','lunch');
   fill('먹을 인분','2');
   fill('추천 조건','달걀 제외 20분 이내');
+  let releaseRecommendation;
+  holdRecommendation=new Promise(resolve=>{releaseRecommendation=resolve;});
   await click('추천받기');
+  const loadingButton=await screen.findByRole('button',{name:'추천받는 중…',exact:true});
+  assert.equal(loadingButton.disabled,true);
+  releaseRecommendation();holdRecommendation=null;
   await screen.findByText('기본 추천',{exact:true});
+  await screen.findByText(/AI 연결 설정이 준비되지 않아/);
   await screen.findByText(/점심 · 2인분 · 최대 20분 · 제외 달걀/);
   assert.deepEqual(await (await realFetch(base+'/v3/workspace')).json(),undone);
 

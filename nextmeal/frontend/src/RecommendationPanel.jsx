@@ -7,7 +7,7 @@ function missingLabel(part) {
   return part.name + ' ' + formatAmount(part.shortage) + (unitLabels[part.unit] || '');
 }
 
-export default function RecommendationPanel({selection, revision, ingredients, onRecommend, onChoose}) {
+export default function RecommendationPanel({selection, revision, ingredients, onRecommend, onChoose, loading=false}) {
   const [prompt, setPrompt] = useState('');
   const [result, setResult] = useState(null);
   const servings = Number(selection.servings);
@@ -28,14 +28,14 @@ export default function RecommendationPanel({selection, revision, ingredients, o
   }
 
   return <Card title="문장으로 메뉴 추천받기">
-    <form className="recommendation-form" onSubmit={request}>
+    <form className="recommendation-form" onSubmit={request} aria-busy={loading}>
       <Field label="추천 조건">
         <input value={prompt} onChange={event => {
           setPrompt(event.target.value);
           setResult(null);
         }} required maxLength={500} placeholder="예: 달걀 제외 20분 이내"/>
       </Field>
-      <Button type="submit" disabled={!canRequest}>추천받기</Button>
+      <Button type="submit" disabled={!canRequest || loading}>{loading ? '추천받는 중…' : '추천받기'}</Button>
     </form>
     <p className="muted recommendation-hint">끼니는 위에서 선택해요. 날짜와 인분을 문장에 적으면 추천 결과에 반영돼요.</p>
     {advice && !current && <p role="status" className="muted">재고나 메뉴가 업데이트됐어요. 추천을 다시 받아 주세요.</p>}

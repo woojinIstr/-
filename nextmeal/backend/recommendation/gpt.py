@@ -5,6 +5,7 @@ import os
 from contextlib import nullcontext
 from .conditions import ConditionError, parse_conditions
 from .engine import recommend
+from .diagnostics import FALLBACK_MESSAGES, configuration_status, failure_code
 
 logger = logging.getLogger(__name__)
 
@@ -22,16 +23,17 @@ def recommend_with_gpt(workspace, user_request='오늘 저녁 추천해 줘', *,
             default_date=default_date, default_servings=default_servings,
         )
     except ConditionError as e:
-        return {'source':'needs_input','message':str(e), 'recommendations':[], 'conditions':None}
+        return {'source':'needs_input','message':str(e), 'recommendations':[], 'conditions':None,
+                'reason_code': 'conditions_unclear'}
     candidates = recommend(workspace, **conditions, limit=10)
     if not candidates:
         return {'source':'rules','message':'입력한 조건에 맞는 메뉴가 없습니다.',
-                'recommendations':[], 'conditions':conditions}
-    fallback = {'source':'rules','message':'AI 추천을 사용할 수 없어 조건에 맞는 기본 추천을 표시합니다.',
-                'recommendations':candidates[:2], 'conditions':conditions}
+                'recommendations':[], 'conditions':conditions, 'reason_code': 'no_candidates'}
+    fallback = {'source':'rules', 'recommendations':candidates[:2], 'conditions':conditions}
     api_key = os.getenv('OPENAI_API_KEY', '').strip()
     if not api_key and client is None:
-        return fallback
+        return {**fallback, 'reason_code': 'not_configured',
+                'message': FALLBACK_MESSAGES['not_configured']}
     # Never send raw inventory, account IDs, or credentials to the model.
     menu_data = [{key:item[key] for key in ('recipe_id','name','minutes','ingredients','missing','ready')}
                  for item in candidates]
@@ -44,7 +46,7 @@ def recommend_with_gpt(workspace, user_request='오늘 저녁 추천해 줘', *,
         by_id = {item['recipe_id']: item for item in candidates}
         with connection as model_client:
             response = model_client.responses.create(
-                model=os.getenv('OPENAI_MODEL', '').strip() or 'gpt-4.1-mini',
+                model=configuration_status()['model'],
                 instructions=(
                     '당신은 요리 메뉴 순위 도우미입니다. 후보에 있는 recipe_id만 선택하세요. '
                     '선택한 메뉴와 제공된 정보만 설명하고 조리 가능성, 알레르기 안전성, 식품 안전성을 지어내지 마세요. '
@@ -76,7 +78,10 @@ def recommend_with_gpt(workspace, user_request='오늘 저녁 추천해 줘', *,
             raise RecommendationResponseError('unregistered recipe id')
         # The array order always matches the model's ranked recipe IDs.
         chosen=[dict(by_id[i],rank=n+1) for n,i in enumerate(ids)]
-        return {'source':'gpt','message':message,'recommendations':chosen,'conditions':conditions}
+        return {'source':'gpt','message':message,'recommendations':chosen,'conditions':conditions,
+                'reason_code': None}
     except Exception as error:
-        logger.warning('Recommendation model fallback (%s)', type(error).__name__)
-        return fallback
+        reason = ('invalid_response' if isinstance(error, (RecommendationResponseError, json.JSONDecodeError))
+                  else failure_code(error))
+        logger.warning('Recommendation model fallback reason=%s error_type=%s', reason, type(error).__name__)
+        return {**fallback, 'reason_code': reason, 'message': FALLBACK_MESSAGES[reason]}

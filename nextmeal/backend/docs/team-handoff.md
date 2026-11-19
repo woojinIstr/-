@@ -1,3 +1,11 @@
+# v0.3.8 AI 연동 전달
+
+- B·D의 실행 기준은 `nextmeal/`입니다. v0.3.8은 인증된 `/v3/recommendation-status`와 추천 응답의 `reason_code`, `CHECK_AI_WINDOWS.cmd`를 제공합니다. 설정 확인과 실제 호출 성공을 구분합니다.
+- C는 B·D의 최신 `nextmeal/backend/recommendation/`을 기준으로 수정사항을 반영하세요. 조건 파싱·응답 검증 수정과 새 원인 코드를 유지해야 합니다. 실제 OpenAI 호출 검증은 남아 있습니다.
+- B는 서버에 API 키·모델을 설정하고, D는 샘플 실호출 성공 후 사용자 계정에서 추천 표시 → 식사 저장 → 장보기 갱신 → 조리 전 재고 유지까지 확인하세요. 설정과 실행 안내는 `recommendations.md`를 참고하세요.
+
+---
+
 # v0.3.5 추가 전달
 
 - B: `/v3/commands`의 `history.undo`와 충돌·중복 방지를 구현했습니다. 동일 요청 재시도는 기존 UUID를 유지합니다. action payload는 `{id: 대상 이력 UUID}`입니다. API·스키마는 이 폴더의 최신 문서를 기준으로 사용하세요.
