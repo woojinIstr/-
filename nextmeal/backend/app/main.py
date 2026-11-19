@@ -12,6 +12,7 @@ from .workspace_api import register_workspace_routes
 from .timing import install_timing, measure
 from .timing import note_auth
 from .auth import SupabaseIdentity, SigningKeysUnavailable
+from recommendation.api import register_recommendation_routes
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Response
@@ -173,7 +174,7 @@ def create_app(mode=None, db_path=None):
         try:yield
         finally:
             if mode=='supabase':store.close()
-    app = FastAPI(title='다음한끼 Backend', version='0.3.5',lifespan=lifespan)
+    app = FastAPI(title='다음한끼 Backend', version='0.3.7',lifespan=lifespan)
     install_timing(app)
     app.add_middleware(CORSMiddleware, allow_origins=os.getenv('CORS_ORIGINS','http://localhost:5173').split(','), allow_methods=['GET','POST','PATCH','DELETE'], allow_headers=['Authorization','Content-Type'], expose_headers=['Server-Timing','X-Request-ID','X-Upstream-Requests','X-Auth-Verification','X-Conflict-Reason'])
     bearer = HTTPBearer(auto_error=False)
@@ -220,4 +221,5 @@ def create_app(mode=None, db_path=None):
         return Response(status_code=204)
     register_meal_routes(app, store, identity)
     register_workspace_routes(app, store, identity, mode)
+    register_recommendation_routes(app, identity)
     return app

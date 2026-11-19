@@ -1,5 +1,7 @@
 # 통합본 API v0.3
 
+v0.3.6부터 규칙 추천 `GET /v3/recommendations`와 자연어 추천 `POST /v3/gpt-recommendations`를 제공합니다. [요청·응답과 실행 안내](recommendations.md).
+
 v0.3.5는 `history.undo`를 추가합니다. payload는 `{id: "대상 이력 UUID"}`이며 request_id·expected_revision 및 미리보기/저장 경로는 동일합니다. 조리·사용·폐기만 지원합니다. 이력의 `can_undo`, `undo_reason`은 조회 시 계산한 표시 값이며, 저장 시 서버에서 다시 확인합니다.
 
 새 조리·사용·폐기 이력에는 `undo.version=1`, `undo.lots[{id,ingredient_id,unit,before_quantity,after_quantity,previous_change_id}]`를 보관합니다. 조리는 `undo.meal`에 식사 상태 복원 정보도 보관합니다. 수정된 inventory/meals 항목의 `change_id`는 해당 변경 이력 ID입니다. 클라이언트가 정하거나 저장 요청 payload에 넣는 값이 아닙니다.
