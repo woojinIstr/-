@@ -18,13 +18,14 @@ test('integrated screen with real FastAPI: packages, custom recipe, cooking, sho
  try {
   const venv=process.platform==='win32'?'../backend/.venv/Scripts/python.exe':'../backend/.venv/bin/python';
   const python=existsSync(venv)?venv:process.env.CODEX_PRIMARY_RUNTIME_PYTHON||'python';
-  server=spawn(python,['-m','uvicorn','app.main:create_app','--factory','--host','127.0.0.1','--port','8913'],{cwd:'../backend',env:{...process.env,APP_ENV:'development',APP_MODE:'local',SQLITE_PATH:join(tmp,'test.db')},stdio:'pipe'});
+  server=spawn(python,['-m','uvicorn','app.main:create_app','--factory','--host','127.0.0.1','--port','8913'],{cwd:'../backend',env:{...process.env,APP_ENV:'development',APP_MODE:'local',OPENAI_API_KEY:'',SQLITE_PATH:join(tmp,'test.db')},stdio:'pipe'});
   await new Promise((resolve,reject)=>{server.stderr.on('data',c=>{if(c.toString().includes('Application startup complete'))resolve();});server.once('exit',code=>reject(Error('Server exited '+code)));setTimeout(()=>reject(Error('Server startup timeout')),15000).unref();});
   await build({entryPoints:['src/IntegratedApp.jsx'],outfile:output.pathname,bundle:true,platform:'node',format:'esm',external:['react','lucide-react'],define:{'import.meta.env':'{}'}});
   const App=(await import(output.href)).default;
-  let loseDirectReply=false,previewCount=0;
+  let loseDirectReply=false,previewCount=0,holdRecommendation=null;
   global.fetch=async(url,options)=>{
    if(url==='/app-config')return {ok:true,json:async()=>({mode:'local',url:'',key:'',api:base})};
+   if(url.endsWith('/v3/gpt-recommendations')&&holdRecommendation)await holdRecommendation;
    if(url.includes('/v3/preview'))previewCount++;
    const response=await realFetch(url,options);
    if(loseDirectReply&&url.endsWith('/v3/commands')){loseDirectReply=false;throw new TypeError('시험용 응답 유실');}
@@ -154,6 +155,36 @@ test('integrated screen with real FastAPI: packages, custom recipe, cooking, sho
   const undone=await (await realFetch(base+'/v3/workspace')).json();
   assert.equal(undone.workspace.inventory[0].quantity,800);
   assert.equal(undone.workspace.meals.find(m=>m.slot==='breakfast').status,'planned');
+  await click('메뉴 찾기');
+  fill('식사 시간','lunch');
+  fill('먹을 인분','2');
+  fill('추천 조건','달걀 제외 20분 이내');
+  let releaseRecommendation;
+  holdRecommendation=new Promise(resolve=>{releaseRecommendation=resolve;});
+  await click('추천받기');
+  const loadingButton=await screen.findByRole('button',{name:'추천받는 중…',exact:true});
+  assert.equal(loadingButton.disabled,true);
+  releaseRecommendation();holdRecommendation=null;
+  await screen.findByText('기본 추천',{exact:true});
+  await screen.findByText(/AI 연결 설정이 준비되지 않아/);
+  await screen.findByText(/점심 · 2인분 · 최대 20분 · 제외 달걀/);
+  assert.deepEqual(await (await realFetch(base+'/v3/workspace')).json(),undone);
+
+  fill('먹을 인분','3');
+  assert.equal(screen.queryByRole('button',{name:'추천 메뉴 추가'}),null);
+  fill('추천 조건','내일 2인분 달걀 제외 20분 이내');
+  await click('추천받기');
+  const added=await screen.findAllByRole('button',{name:'추천 메뉴 추가'});
+  fireEvent.click(added[0]);
+  await screen.findByRole('heading',{name:'식사 계획',exact:true});
+  const afterRecommendation=await (await realFetch(base+'/v3/workspace')).json();
+  const planned=afterRecommendation.workspace.meals.at(-1);
+  const nextDate=new Date(undone.today+'T12:00:00Z');
+  nextDate.setUTCDate(nextDate.getUTCDate()+1);
+  assert.equal(planned.date,nextDate.toISOString().slice(0,10));
+  assert.equal(planned.slot,'lunch');
+  assert.equal(planned.servings,2);
+  assert.deepEqual(afterRecommendation.workspace.inventory,undone.workspace.inventory);
   const timings=screen.getByRole('table',{name:'개발용 요청 성능'});
   assert.ok(timings.textContent.includes('local-demo'));
   assert.ok(timings.textContent.includes('/v3/commands'));

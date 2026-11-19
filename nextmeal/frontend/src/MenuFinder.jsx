@@ -1,6 +1,7 @@
 import React, {useMemo, useState} from 'react';
 import {Button, Card, Field, formatAmount} from './integrated-ui';
 import {dateNow, unitLabels, slotLabels} from './workspace-client';
+import RecommendationPanel from './RecommendationPanel';
 
 export function nextHomeMeal(meals, date, slot, excludedId) {
   const slots = Object.keys(slotLabels);
@@ -9,7 +10,8 @@ export function nextHomeMeal(meals, date, slot, excludedId) {
     .sort((a,b)=>a.date.localeCompare(b.date) || slots.indexOf(a.slot)-slots.indexOf(b.slot) || a.id.localeCompare(b.id))[0];
 }
 
-export default function MenuFinder({workspace, onChoose, target, onLeaveTarget, onCreate, selection, onSelectionChange, chooseLabel}) {
+export default function MenuFinder({workspace, onChoose, target, onLeaveTarget, onCreate, selection,
+  onSelectionChange, chooseLabel, revision, onRecommend, loading=false}) {
   const [minutes, setMinutes] = useState('30');
   const [exclude, setExclude] = useState('');
   const [prefer, setPrefer] = useState('');
@@ -55,6 +57,8 @@ export default function MenuFinder({workspace, onChoose, target, onLeaveTarget, 
       <Field label="먹을 인분"><input type="number" min="0.1" max="12" step="any" value={selection.servings}
         onChange={e=>onSelectionChange({...selection,servings:e.target.value})}/></Field>
     </div>}
+    {onRecommend && selection && !target && <RecommendationPanel selection={selection} revision={revision}
+      ingredients={workspace.ingredients} onRecommend={onRecommend} onChoose={onChoose} loading={loading}/>}
     <div className="toolbar">
       <Field label="최대 조리 시간(분)"><input type="number" min="1" max="1440" value={minutes} onChange={e=>setMinutes(e.target.value)}/></Field>
       <Field label="제외 재료(쉼표 구분)"><input value={exclude} onChange={e=>setExclude(e.target.value)}/></Field>

@@ -6,8 +6,52 @@ C의 `d71892f`를 B v0.3.5의 작업 공간에 연결했습니다. B는 한국 �
 |---|---|---|
 | `GET /v3/recommendations` | 선택 쿼리 `target_date`, `servings`(0.1~12), `max_minutes`(1~1440), `excluded_ids`, `preferred_ids`, `limit`(1~30) | `revision`, `recommendations`, `notice` |
 | `POST /v3/gpt-recommendations` | JSON 본문의 `user_request`(공백을 제외해 글자가 있는 문자열, 최대 500자), 선택 기본값 `target_date`와 `servings`(0.1~12) | `revision`, `source`, `message`, `conditions`, `recommendations` |
+| `GET /v3/recommendation-status` | 로그인 인증 | `check=configuration_only`, `key_configured`, `sdk_available`, `model`, `version` |
 
-Supabase 모드는 두 API 모두 `Authorization: Bearer <사용자 액세스 토큰>`을 받습니다. 로컬 시연 모드는 테스트 계정으로 읽습니다. 두 API의 응답은 `private, no-store`입니다. 규칙 API에서 재료 ID 여러 개를 선택할 때는 같은 쿼리 이름을 반복하세요. 현재 계정에 없는 ID를 보내면 422가 반환됩니다.
+Supabase 모드에서 추천·상태 API는 `Authorization: Bearer <사용자 액세스 토큰>`을 받습니다. 로컬 시연 모드는 테스트 계정으로 읽습니다. 응답은 `private, no-store`입니다. 규칙 API에서 재료 ID 여러 개를 선택할 때는 같은 쿼리 이름을 반복하세요. 현재 계정에 없는 ID를 보내면 422가 반환됩니다.
+
+v0.3.8의 상태 확인 API에도 같은 인증과 캐시 정책이 적용됩니다. `key_configured=true`는 서버에 값이 있다는 의미이며, 실제 OpenAI 연결 성공은 추천 응답의 `source=gpt`로 확인합니다.
+
+## v0.3.8 호출 결과 구분
+
+기존 응답에 `reason_code`를 추가했습니다. 성공한 AI 추천은 `source=gpt`, `reason_code=null`입니다. `source`와 기존 추천 배열 형식은 그대로 사용할 수 있습니다.
+
+| reason_code | 확인할 내용 |
+|---|---|
+| `not_configured` | 서버 환경변수의 `OPENAI_API_KEY` 설정 |
+| `sdk_missing` | 서버의 requirements.txt 설치 |
+| `authentication_error` | API 키의 유효성 |
+| `permission_denied` | 프로젝트와 모델 사용 권한 |
+| `model_unavailable` | `OPENAI_MODEL` 이름과 모델 접근 권한 |
+| `quota_exceeded` | API 계정의 이용 한도 |
+| `rate_limited` | 요청 빈도, 잠시 후 재시도 |
+| `timeout` | 응답 지연, 네트워크 상태와 재시도 |
+| `connection_error` | 서버의 외부 네트워크 연결 |
+| `invalid_request` | 요청 형식과 선택한 모델의 지원 여부 |
+| `invalid_response` | AI 응답의 JSON, 메뉴 ID와 순위 검증 실패 |
+| `service_error` | 외부 서비스 또는 예기치 않은 처리 오류 |
+| `no_candidates` | 조건에 맞는 등록 메뉴 없음 |
+| `conditions_unclear` | 조건을 명확히 다시 입력 |
+
+오류 응답과 로그에는 고정된 원인 코드와 오류 종류만 사용합니다. 공급자가 반환한 원문 오류는 전송하지 않습니다. 오류 때도 서버가 검증한 제외·시간·인분·날짜 조건을 유지합니다.
+
+## 실제 호출 확인 프로그램
+
+Windows에서 최상위 `CHECK_AI_WINDOWS.cmd`를 실행하면 설치된 서버 환경으로 샘플 재료와 메뉴를 사용해 실제 호출을 한 번 수행합니다. API 사용료가 발생할 수 있습니다. `source=gpt`만 성공으로 처리하며 응답에 적용된 조건, 메뉴 ID, 순위와 추천 이유를 출력합니다. 이 프로그램은 DB에 연결하지 않습니다.
+
+설정만 확인하려면 프로젝트 최상위에서 다음 명령을 실행하세요.
+
+```powershell
+backend\.venv\Scripts\python.exe backend\tools\check_ai.py
+```
+
+실제 호출은 다음 명령으로도 실행할 수 있습니다.
+
+```powershell
+backend\.venv\Scripts\python.exe backend\tools\check_ai.py --live
+```
+
+`.env`를 수정한 뒤에는 실행 중인 서버도 재시작하세요. 프로그램과 서버 모두 기존 프로세스의 환경변수가 `.env`보다 우선합니다. 종료 코드 0은 설정 확인 모드에서는 설정이 준비됐다는 뜻이며, `--live` 모드에서는 실제 추천 응답을 받았다는 뜻입니다. 샘플 실호출 성공 후에는 로그인한 웹 화면에서 보유 재료를 이용한 추천과 식사 저장 흐름을 확인하세요.
 
 ## 자연어 요청 확인
 

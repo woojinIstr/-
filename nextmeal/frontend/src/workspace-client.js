@@ -29,7 +29,12 @@ export function createWorkspaceClient(base, auth, local=false, onTiming=null) {
       if(onTiming)try{onTiming({path,method:body?'POST':'GET',status:response?.status||0,browser_ms:Number((performance.now()-started).toFixed(2)),...timingHeaders(response)});}catch{}
     }
   }
-  return {load:()=>request('/v3/workspace'),preview:c=>request('/v3/preview?compact=true',c),commit:c=>request('/v3/commands',c)};
+  return {
+    load:()=>request('/v3/workspace'),
+    recommend:body=>request('/v3/gpt-recommendations',body),
+    preview:c=>request('/v3/preview?compact=true',c),
+    commit:c=>request('/v3/commands',c),
+  };
 }
 export const dateNow=()=>new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Seoul'});
 export function offsetDate(day,n){const d=new Date(day+'T12:00:00');d.setDate(d.getDate()+n);return d.toLocaleDateString('sv-SE');}

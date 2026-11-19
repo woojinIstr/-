@@ -131,11 +131,21 @@ export default function IntegratedApp(){
   setMealTarget({date:day,slot,servings:1});
   navigate('recommend');
  }
- function chooseMenu(recipeId) {
+ async function requestRecommendation(body) {
+  let result;
+  await run(async()=>{
+   result=await api.recommend(body);
+   if(result.revision!==view.revision) await reload();
+  });
+  return result;
+ }
+ function chooseMenu(recipeId, recommendation=null) {
   const target=followUp&&nextMeal;
+  if(recommendation && recommendation.revision!==view.revision) return;
+  const plan=target||recommendation||mealTarget;
   prepare('meal.save',{
-   id:target?.id||null,date:target?.date||mealTarget.date,slot:target?.slot||mealTarget.slot,
-   recipe_id:recipeId,servings:Number(target?.servings||mealTarget.servings),repeat_days:1
+   id:target?.id||null,date:plan.date,slot:plan.slot,
+   recipe_id:recipeId,servings:Number(plan.servings),repeat_days:1
   });
  }
  function lotForm(ingredientId=null,lot=null,manualId=null,shortage=null) {
@@ -234,6 +244,7 @@ export default function IntegratedApp(){
     </div>}
     {mealDates.map(day=><div key={day} className={week&&day!==date?'week-other-day':undefined}><h2 className="section-subtitle">{day}</h2><div className="meal-grid">{Object.entries(Slots).map(([slot,label])=><Card key={slot} title={label}>{ws.meals.filter(m=>m.date===day&&m.slot===slot).map(m=><div className="meal-card" key={m.id}><strong>{m.recipe.name}</strong><div className="meal-meta"><span>{m.servings}인분</span><span className="chip">{Status[m.status]}</span></div><details><summary>필요 재료</summary>{scaledParts(m).map(i=><p className="fineprint" key={i.ingredient_id}>{name(i.ingredient_id)} {fmt(i.quantity)}{U[i.unit]}</p>)}</details><div className="meal-actions">{m.status==='planned'?<><button onClick={()=>mealForm(null,m)}>계획 수정</button><button onClick={()=>prepare('meal.state',{id:m.id,status:'eating_out'})}>외식</button><button onClick={()=>prepare('meal.state',{id:m.id,status:'cancelled'})}>취소</button><button onClick={()=>openCook(m)}>조리 완료</button></>:m.status!=='cooked'?<button onClick={()=>prepare('meal.state',{id:m.id,status:'planned'})}>예정으로 복원</button>:<p className="fineprint">사용량 기록 완료</p>}</div></div>)}{!ws.meals.some(m=>m.date===day&&m.slot===slot)&&<div className="empty-action"><p>예정된 식사가 없습니다.</p><Button secondary onClick={()=>openMenuPicker(day,slot)}>{label} 메뉴 고르기</Button></div>}</Card>)}</div></div>)}</>}
    {page==='recommend'&&<MenuFinder workspace={ws} target={nextMeal} onChoose={chooseMenu} selection={mealTarget} onSelectionChange={setMealTarget}
+    revision={view.revision} onRecommend={requestRecommendation} loading={busy}
     onLeaveTarget={()=>setFollowUp(null)} onCreate={()=>{navigate('recipes');recipeForm();}}/>}
    {page==='shopping'&&<ShoppingList workspace={ws} shopping={view.shopping}
     onAdd={()=>setForm({kind:'manual',name:'',quantity:1,unit:'개'})} onPurchase={lotForm}

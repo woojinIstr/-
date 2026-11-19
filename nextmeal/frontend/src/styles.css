@@ -97,3 +97,10 @@
   .week-picker button { min-height:66px; }
   .week-picker small { font-size:10px; }
 }
+.recommendation-form { display:flex; align-items:end; gap:12px; flex-wrap:wrap; }
+.recommendation-form .field { min-width:min(100%,240px); }
+.recommendation-hint { margin:8px 0 0; }
+.recommendation-result { margin-top:16px; overflow-wrap:anywhere; }
+.recommendation-menu { border-top:1px solid #dbe9db; padding:14px 0 0; margin-top:12px;
+  display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px 16px; }
+.recommendation-menu h3, .recommendation-menu p { margin:0 0 4px; }

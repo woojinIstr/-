@@ -7,6 +7,7 @@ from pydantic import Field
 from app.workspace import Model
 from .engine import recommend
 from .gpt import recommend_with_gpt
+from .diagnostics import configuration_status
 
 
 class RecommendationRequest(Model):
@@ -17,6 +18,11 @@ class RecommendationRequest(Model):
 
 def register_recommendation_routes(app, identity):
     router=APIRouter(tags=['C - 메뉴 추천'])
+
+    @router.get('/v3/recommendation-status')
+    def status(response: Response, auth=Depends(identity)):
+        response.headers['Cache-Control'] = 'private, no-store'
+        return {**configuration_status(), 'version': app.version}
 
     @router.get('/v3/recommendations')
     def suggestions(response:Response,target_date:date|None=None,
