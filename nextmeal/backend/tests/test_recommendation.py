@@ -65,7 +65,9 @@ class TestRecommendation(unittest.TestCase):
         self.assertTrue(all(x['recipe_id']!='egg_rice' for x in r['recommendations']))
     def test_duplicate_ids_rejected(self):
         r=recommend_with_gpt(workspace(),'계란 제외',client=MockClient('{"recipe_ids":["rice","rice"],"message":"추천"}'),today=TODAY)
-        self.assertEqual(r['source'],'rules')
+        self.assertEqual(r['source'],'gpt')
+        self.assertEqual(len(r['recommendations']), 1)
+        self.assertEqual(r['recommendations'][0]['rank'], 1)
     def test_unrecognized_exclusion_is_not_ignored(self):
         r=recommend_with_gpt(workspace(),'버섯 제외 10분 이내',client=MockClient('{}'),today=TODAY)
         self.assertEqual(r['source'],'needs_input');self.assertEqual(r['recommendations'],[])

@@ -211,17 +211,41 @@ def recommend_with_gpt(
 
         if (
             not isinstance(ids, list)
-            or not 1 <= len(ids) <= 2
-            or any(not isinstance(i, str) for i in ids)
-            or len(set(ids)) != len(ids)
             or not isinstance(message, str)
             or not message.strip()
             or len(message) > 1000
         ):
             raise RecommendationResponseError('invalid ranking')
 
-        if any(i not in by_id for i in ids):
-            raise RecommendationResponseError('unregistered recipe id')
+        # Keep at most two unique, registered recipe IDs.
+        valid_ids = []
+
+        for recipe_id in ids:
+            if not isinstance(recipe_id, str):
+                continue
+
+            if recipe_id not in by_id:
+                continue
+
+            if recipe_id in valid_ids:
+                continue
+
+            valid_ids.append(recipe_id)
+
+            if len(valid_ids) == 2:
+                break
+
+        if not valid_ids:
+            raise RecommendationResponseError('no valid recipe IDs')
+
+        if valid_ids != ids:
+            logger.warning(
+                "OpenRouter ranking normalized: received=%d accepted=%d",
+                len(ids),
+                len(valid_ids),
+            )
+
+        ids = valid_ids
 
         chosen = [
             dict(by_id[i], rank=n + 1)
