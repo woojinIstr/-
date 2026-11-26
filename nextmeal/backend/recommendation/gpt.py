@@ -12,7 +12,7 @@ from .diagnostics import FALLBACK_MESSAGES, configuration_status, failure_code
 logger = logging.getLogger(__name__)
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
-FREE_MODEL = "openrouter/free"
+FREE_MODEL = "google/gemma-4-26b-a4b-it:free"
 
 
 class RecommendationResponseError(ValueError):

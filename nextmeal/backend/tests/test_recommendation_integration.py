@@ -131,7 +131,7 @@ class RecommendationIntegrationTests(unittest.TestCase):
             calls.append(body)
 
             # Only free routing is allowed.
-            self.assertEqual(body['model'], 'openrouter/free')
+            self.assertEqual(body['model'], 'google/gemma-4-26b-a4b-it:free')
 
             messages = body['messages']
             self.assertEqual(messages[0]['role'], 'system')
