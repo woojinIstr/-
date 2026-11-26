@@ -113,48 +113,100 @@ class RecommendationIntegrationTests(unittest.TestCase):
         self.assertEqual(result['conditions']['target_date'], (base + timedelta(days=1)).isoformat())
         self.assertEqual(result['conditions']['servings'], 3)
 
-    def test_openai_sdk_roundtrip_and_failure_use_only_filtered_candidates(self):
+
+    def test_openrouter_sdk_roundtrip_and_failure_use_only_filtered_candidates(self):
         fast_id = self.add_recipe('쌀 시험 요리', 9, self.rice, 100, 'g')
         filtered_id = self.add_recipe('달걀 시험 요리', 5, self.egg, 1, 'count')
         before = self.workspace()
         calls = []
 
         def mock_responses(request):
-            self.assertEqual((request.method, request.url.path), ('POST', '/v1/responses'))
+            self.assertEqual(request.method, 'POST')
+            self.assertEqual(
+                request.url.path, '/api/v1/chat/completions'
+            )
+            self.assertEqual(request.url.host, 'openrouter.ai')
+
             body = json.loads(request.content)
             calls.append(body)
-            self.assertIs(body['store'], False)
-            self.assertEqual(body['text']['format']['type'], 'json_schema')
-            candidate_ids = {item['recipe_id'] for item in json.loads(body['input'])['candidates']}
+
+            # Only free routing is allowed.
+            self.assertEqual(body['model'], 'openrouter/free')
+
+            messages = body['messages']
+            self.assertEqual(messages[0]['role'], 'system')
+            self.assertEqual(messages[1]['role'], 'user')
+
+            data = json.loads(messages[1]['content'])
+            candidate_ids = {
+                item['recipe_id']
+                for item in data['candidates']
+            }
+
             self.assertIn(fast_id, candidate_ids)
             self.assertNotIn(filtered_id, candidate_ids)
+
             if len(calls) == 2:
-                return httpx.Response(503, json={'error': {'message': 'simulated failure'}})
-            return httpx.Response(200, json={
-                'id': 'resp_test', 'object': 'response', 'status': 'completed',
-                'created_at': 1, 'model': 'gpt-4.1-mini',
-                'output': [{
-                    'type': 'message', 'id': 'msg_test', 'role': 'assistant', 'status': 'completed',
-                    'content': [{'type': 'output_text', 'annotations': [],
-                                 'text': json.dumps({'recipe_ids': [fast_id], 'message': '쌀 요리를 추천해요.'})}],
-                }],
-            })
+                return httpx.Response(
+                    503,
+                    json={'error': {'message': 'simulated failure'}}
+                )
+
+            return httpx.Response(
+                200,
+                json={
+                    'id': 'chatcmpl_test',
+                    'object': 'chat.completion',
+                    'created': 1,
+                    'model': 'openrouter/free',
+                    'choices': [{
+                        'index': 0,
+                        'finish_reason': 'stop',
+                        'message': {
+                            'role': 'assistant',
+                            'content': json.dumps({
+                                'recipe_ids': [fast_id],
+                                'message': '쌀 요리를 추천해요.'
+                            })
+                        }
+                    }]
+                }
+            )
 
         def make_client(**kwargs):
-            return OpenAI(http_client=httpx.Client(transport=httpx.MockTransport(mock_responses)), **kwargs)
+            return OpenAI(
+                http_client=httpx.Client(
+                    transport=httpx.MockTransport(mock_responses)
+                ),
+                **kwargs
+            )
 
-        with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}), patch('openai.OpenAI', side_effect=make_client):
+        with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}), \
+             patch('openai.OpenAI', side_effect=make_client):
             ai = self.ask('달걀 제외 10분 이내 2인분')
             fallback = self.ask('달걀 제외 10분 이내 2인분')
-            self.assertNotIn('test-key', self.client.get('/app-config').text)
+            self.assertNotIn(
+                'test-key', self.client.get('/app-config').text
+            )
+
         self.assertEqual(len(calls), 2)
         self.assertEqual(ai['source'], 'gpt')
-        self.assertEqual([(row['recipe_id'], row['rank']) for row in ai['recommendations']], [(fast_id, 1)])
+        self.assertEqual(
+            [(row['recipe_id'], row['rank'])
+             for row in ai['recommendations']],
+            [(fast_id, 1)]
+        )
         self.assertEqual(fallback['source'], 'rules')
         self.assertEqual(fallback['conditions'], ai['conditions'])
-        self.assertTrue(all(row['recipe_id'] != filtered_id and row['minutes'] <= 10
-                            for row in fallback['recommendations']))
+        self.assertTrue(
+            all(
+                row['recipe_id'] != filtered_id
+                and row['minutes'] <= 10
+                for row in fallback['recommendations']
+            )
+        )
         self.assertEqual(self.workspace(), before)
+
 
     def test_registered_endpoints_validate_inputs_and_require_login_in_supabase_mode(self):
         schema = self.client.get('/openapi.json').json()
