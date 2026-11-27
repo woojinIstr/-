@@ -18,11 +18,11 @@ v0.3.8의 상태 확인 API에도 같은 인증과 캐시 정책이 적용됩니
 
 | reason_code | 확인할 내용 |
 |---|---|
-| `not_configured` | 서버 환경변수의 `OPENAI_API_KEY` 설정 |
+| `not_configured` | 서버 환경변수의 `OPENROUTER_API_KEY` 설정 |
 | `sdk_missing` | 서버의 requirements.txt 설치 |
 | `authentication_error` | API 키의 유효성 |
 | `permission_denied` | 프로젝트와 모델 사용 권한 |
-| `model_unavailable` | `OPENAI_MODEL` 이름과 모델 접근 권한 |
+| `model_unavailable` | `OPENROUTER_MODEL` 이름과 모델 접근 권한 |
 | `quota_exceeded` | API 계정의 이용 한도 |
 | `rate_limited` | 요청 빈도, 잠시 후 재시도 |
 | `timeout` | 응답 지연, 네트워크 상태와 재시도 |
@@ -71,7 +71,7 @@ backend\.venv\Scripts\python.exe backend\tools\check_ai.py --live
 
 ## 서버 설정
 
-`backend/.env`에 `OPENAI_API_KEY`를 입력하고 서버를 재시작하면, 조건을 통과한 메뉴가 있을 때 OpenAI를 호출합니다. `OPENAI_MODEL`은 선택이며 기본값은 `gpt-4.1-mini`입니다. 운영에서는 서버 환경변수에 값을 설정하세요. API 키는 프론트 설정이나 GitHub에 올리지 마세요.
+`backend/.env`에 `OPENROUTER_API_KEY`를 입력하고 서버를 재시작하면, 조건을 통과한 메뉴가 있을 때 OpenRouter를 호출합니다. `OPENROUTER_MODEL`은 선택이며 기본값은 `google/gemma-4-26b-a4b-it:free`입니다. 운영에서는 서버 환경변수에 값을 설정하세요. API 키는 프론트 설정이나 GitHub에 올리지 마세요.
 
 OpenAI에는 사용자 입력 문장과 추천 후보를 전송합니다. 직접 입력 화면에는 추천에 필요한 조건만 적도록 안내하세요. 키가 비어 있으면 외부 호출 없이 규칙 추천을 반환합니다. OpenAI에서 실패할 경우 서버 로그에 오류 종류가 기록됩니다.
 

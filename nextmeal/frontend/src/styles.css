@@ -104,3 +104,58 @@
 .recommendation-menu { border-top:1px solid #dbe9db; padding:14px 0 0; margin-top:12px;
   display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px 16px; }
 .recommendation-menu h3, .recommendation-menu p { margin:0 0 4px; }
+
+/* Keep the frequent choices visible and the full editors within reach. */
+.finder-controls {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #dbe9de;
+  border-radius: 14px;
+  background: #f1f7f1;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+.finder-pills, .quick-stock-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.finder-pills button {
+  min-height: 42px;
+  border: 1px solid #c8dcca;
+  border-radius: 999px;
+  color: #2f593a;
+  background: #fff;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.finder-pills button[aria-pressed="true"] {
+  background: #32754a;
+  border-color: #32754a;
+  color: white;
+}
+.finder-settings { border-top: 1px solid #dbe9de; }
+.finder-settings summary, .finder-ai > summary { font-weight: 700; }
+.finder-settings .toolbar { margin: 0; }
+.finder-ai { margin-top: 16px; }
+.finder-ai > summary { min-height: 44px; }
+.finder-ingredients { padding-left: 22px; color: #46644e; font-size: 13px; }
+.quick-stock-picks .btn { min-height: 42px; padding: 6px 12px; }
+.quick-stock-list { display: grid; gap: 10px; }
+.quick-stock-row {
+  display: grid;
+  grid-template-columns: minmax(8rem, 2fr) minmax(4rem, 1fr) minmax(4.5rem, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+.quick-stock-row .field { min-width: 0; }
+.quick-stock-row .field :is(input,select) { width: 100%; }
+@media(max-width: 525px) {
+  .quick-stock-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+  .quick-stock-row .field:first-child { grid-column: 1 / -1; }
+}
+
+.quick-stock-parse textarea { width: 100%; resize: vertical; }
+.quick-stock-parse .btn { justify-self: start; }
+.quick-stock-more { grid-column: 1 / -1; }

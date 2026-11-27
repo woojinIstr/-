@@ -25,6 +25,8 @@ class RecommendationIntegrationTests(unittest.TestCase):
             'OPENAI_API_KEY': '',
         }))
         self.client = self.enterContext(TestClient(create_app()))
+        for name, unit in [('달걀','count'), ('밥','g')]:
+            self.command('ingredient.create', {'name': name, 'unit': unit})
         self.initial = self.workspace()
         self.egg = self.ingredient_id('달걀')
         self.rice = self.ingredient_id('밥')
@@ -55,7 +57,7 @@ class RecommendationIntegrationTests(unittest.TestCase):
         return result['recipes'][-1]['id']
 
     def ask(self, user_request, **defaults):
-        response = self.client.post('/v3/gpt-recommendations', json={'user_request': user_request, **defaults})
+        response = self.client.post('/v3/gpt-recommendations', json={'user_request': user_request, 'recipe_source': 'personal', **defaults})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.headers['Cache-Control'], 'private, no-store')
         return response.json()
@@ -181,10 +183,11 @@ class RecommendationIntegrationTests(unittest.TestCase):
                 **kwargs
             )
 
-        with patch.dict(os.environ, {'OPENAI_API_KEY': 'test-key'}), \
+        with patch.dict(os.environ, {'OPENROUTER_API_KEY': 'test-key'}), \
              patch('openai.OpenAI', side_effect=make_client):
             ai = self.ask('달걀 제외 10분 이내 2인분')
-            fallback = self.ask('달걀 제외 10분 이내 2인분')
+            self.assertEqual(self.ask('달걀 제외 10분 이내 2인분'), ai)
+            fallback = self.ask('달걀 제외 10분 이내 2인분 추천해줘')
             self.assertNotIn(
                 'test-key', self.client.get('/app-config').text
             )

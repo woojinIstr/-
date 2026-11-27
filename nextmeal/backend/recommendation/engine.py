@@ -3,7 +3,8 @@
 
 from decimal import Decimal, InvalidOperation
 
-from app.workspace import today as workspace_today
+from app.workspace import stock_for_meal, today as workspace_today, usable
+from app.ingredient_names import stock_keys
 
 
 def recommend(
@@ -15,12 +16,25 @@ def recommend(
     preferred_ids=None,
     limit=10,
     required_ids=None,
+    required_groups=None,
+    exclusive_groups=None,
+    target_slot='dinner',
+    target_meal_id=None,
+    ready_only=False,
+    recipe_source='all',
 ):
     target_date = target_date or workspace_today()
 
-    excluded = set(excluded_ids or [])
-    preferred = set(preferred_ids or [])
-    required_ingredients = set(required_ids or [])
+    keys = stock_keys(workspace.get('ingredients', []))
+    def group(ids):
+        return {keys.get(ingredient_id, ingredient_id) for ingredient_id in ids}
+
+    excluded = group(excluded_ids or [])
+    preferred = group(preferred_ids or [])
+    if required_groups is None:
+        required_groups = [[ingredient_id] for ingredient_id in (required_ids or [])]
+    required = [group(ids) for ids in required_groups]
+    exclusive = [[group(option) for option in options] for options in (exclusive_groups or [])]
 
     ingredients = {
         item['id']: item
@@ -42,22 +56,10 @@ def recommend(
     # Calculate inventory available on the selected date.
     available = {}
 
-    for lot in workspace.get('inventory', []):
+    for lot in stock_for_meal(workspace, target_date, target_slot, target_meal_id):
         if (
-            lot.get('archived')
+            not usable(lot, target_date)
             or lot.get('ingredient_id') not in ingredients
-        ):
-            continue
-
-        if (
-            lot.get('purchased_on')
-            and lot['purchased_on'] > target_date
-        ):
-            continue
-
-        if (
-            lot.get('expires_on')
-            and lot['expires_on'] < target_date
         ):
             continue
 
@@ -76,10 +78,8 @@ def recommend(
         if not quantity.is_finite() or quantity <= 0:
             continue
 
-        available[ingredient_id] = (
-            available.get(ingredient_id, Decimal(0))
-            + quantity
-        )
+        key = keys[ingredient_id]
+        available[key] = available.get(key, Decimal(0)) + quantity
 
     results = []
 
@@ -89,6 +89,9 @@ def recommend(
             recipe.get('archived')
             or not recipe.get('ingredients')
         ):
+            continue
+        source = recipe.get('source', 'personal')
+        if recipe_source != 'all' and recipe_source != source:
             continue
 
         if max_minutes is not None:
@@ -102,24 +105,17 @@ def recommend(
 
         parts = recipe['ingredients']
 
-        recipe_ingredient_ids = {
-            part.get('ingredient_id')
-            for part in parts
-        }
+        recipe_ingredient_ids = group(part.get('ingredient_id') for part in parts)
 
         # Excluded ingredients must never appear.
         if recipe_ingredient_ids & excluded:
             continue
 
-        # At least one matching ID from the required group
-        # must exist in the recipe.
-        # This also supports aliases such as 달걀/계란.
-        if (
-            required_ingredients
-            and not (
-                recipe_ingredient_ids & required_ingredients
-            )
-        ):
+        # Every group must be present. Each group can contain aliases or alternatives.
+        if any(group.isdisjoint(recipe_ingredient_ids) for group in required):
+            continue
+        if any(sum(not option.isdisjoint(recipe_ingredient_ids) for option in group) != 1
+               for group in exclusive):
             continue
 
         base = Decimal(
@@ -133,6 +129,7 @@ def recommend(
         details = []
         matched = 0
         preferred_count = 0
+        used = {}
 
         for part in parts:
             ingredient_id = part.get('ingredient_id')
@@ -170,10 +167,9 @@ def recommend(
                 / base
             ).quantize(Decimal('0.000001'))
 
-            have = available.get(
-                ingredient_id,
-                Decimal(0),
-            )
+            key = keys[ingredient_id]
+            have = available.get(key, Decimal(0)) - used.get(key, Decimal(0))
+            used[key] = used.get(key, Decimal(0)) + min(have, required_quantity)
 
             details.append({
                 'ingredient_id': ingredient_id,
@@ -186,7 +182,7 @@ def recommend(
             if have >= required_quantity:
                 matched += 1
 
-                if ingredient_id in preferred:
+                if key in preferred:
                     preferred_count += 1
 
             else:
@@ -197,7 +193,11 @@ def recommend(
                         required_quantity - have
                     ),
                     'unit': ingredient['unit'],
+                    'needs_unit': any(name == key[0] and unit != key[1] for name, unit in available),
                 })
+
+        if ready_only and missing:
+            continue
 
         score = round(
             100 * matched / len(parts)
@@ -209,6 +209,8 @@ def recommend(
             'recipe_id': recipe['id'],
             'name': recipe['name'],
             'minutes': recipe.get('minutes'),
+            'source': source,
+            'instructions': recipe.get('instructions', ''),
             'score': score,
             'missing': missing,
             'ingredients': details,
@@ -225,6 +227,7 @@ def recommend(
         key=lambda item: (
             len(item['missing']),
             -item['score'],
+            item['source'] == 'starter',
             item['recipe_id'],
         )
     )
