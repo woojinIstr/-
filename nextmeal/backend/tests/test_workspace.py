@@ -5,13 +5,19 @@ import tempfile
 import unittest
 from uuid import uuid4
 from fastapi.testclient import TestClient
-from app.main import create_app, SEEDS
-from app.workspace import today
+from app.main import create_app, DEMO_USER, SEEDS
+from app.workspace import bootstrap, today
 
 class WorkspaceTests(unittest.TestCase):
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory();self.path=self.tmp.name+'/test.db';self.app=create_app('local',self.path);self.client=TestClient(self.app)
-  self.chicken=SEEDS[0]['ingredient_id'];self.milk=SEEDS[4]['ingredient_id'];self.egg=SEEDS[2]['ingredient_id'];self.rice=SEEDS[3]['ingredient_id']
+  state=bootstrap([],[],[],[],[])
+  rows=[{'id':str(uuid4()),'name':name,'unit':unit}
+        for name,unit in [('닭가슴살','g'),('우유','ml'),('달걀','count'),('밥','g')]]
+  self.chicken,self.milk,self.egg,self.rice=(row['id'] for row in rows)
+  if self._testMethodName!='test_legacy_import_once_and_persistence':
+   state['ingredients']=rows
+   self.assertTrue(self.app.state.workspace_repository.put(DEMO_USER,'',-1,state))
  def tearDown(self):self.client.close();self.tmp.cleanup()
  def state(self):
   r=self.client.get('/v3/workspace');self.assertEqual(r.status_code,200,r.text);return r.json()
@@ -49,7 +55,7 @@ class WorkspaceTests(unittest.TestCase):
   self.command('lot.create',{'ingredient_id':self.chicken,'input_quantity':1,'input_unit':'g','purchased_on':today(),'expires_on':'2000-01-01'},422)
  def test_preview_no_write(self):
   before=self.state();body={'request_id':str(uuid4()),'expected_revision':before['revision'],'action':'ingredient.create','payload':{'name':'당근','unit':'g'}}
-  r=self.client.post('/v3/preview',json=body);self.assertEqual(r.status_code,200,r.text);self.assertEqual(len(r.json()['after']['workspace']['ingredients']),9);self.assertEqual(self.state(),before)
+  r=self.client.post('/v3/preview',json=body);self.assertEqual(r.status_code,200,r.text);self.assertEqual(len(r.json()['after']['workspace']['ingredients']),len(before['workspace']['ingredients'])+1);self.assertEqual(self.state(),before)
  def test_idempotent_and_key_mismatch(self):
   body={'request_id':str(uuid4()),'expected_revision':0,'action':'ingredient.create','payload':{'name':'당근','unit':'g'}}
   a=self.client.post('/v3/commands',json=body);b=self.client.post('/v3/commands',json=body)
@@ -152,14 +158,14 @@ class WorkspaceTests(unittest.TestCase):
    self.assertEqual(duplicate.status_code,409)
    self.assertNotIn('X-Conflict-Reason',duplicate.headers)
  def test_legacy_import_once_and_persistence(self):
-  self.client.post('/inventory',json={'ingredient_id':self.chicken,'quantity':123,'unit':'g','storage_location':'fridge'})
+  self.client.post('/inventory',json={'ingredient_id':SEEDS[0]['ingredient_id'],'quantity':123,'unit':'g','storage_location':'fridge'})
   self.assertEqual(self.state()['workspace']['inventory'][0]['quantity'],123)
   self.command('ingredient.create',{'name':'당근','unit':'g'})
   with TestClient(create_app('local',self.path)) as c:self.assertEqual(c.get('/v3/workspace').json(),self.state())
  def test_owners_separated(self):
   repo=self.app.state.workspace_repository;a=repo.load('user-a','');b=repo.load('user-b','')
   doc=deepcopy(a[1]);doc['ingredients'].append({'id':str(uuid4()),'name':'A의 재료','unit':'g'});self.assertTrue(repo.put('user-a','',a[0],doc))
-  self.assertEqual(len(repo.load('user-b','')[1]['ingredients']),8)
+  self.assertEqual(repo.load('user-b','')[1]['ingredients'],[])
  def test_auth_and_unknown_fields(self):
   self.command('ingredient.create',{'name':'당근','unit':'g','user_id':'other'},422)
   self.assertEqual(self.client.post('/v3/commands',json={'request_id':str(uuid4()),'expected_revision':True,'action':'ingredient.create','payload':{'name':'당근','unit':'g'}}).status_code,422)

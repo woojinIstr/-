@@ -915,6 +915,38 @@
             }
           },
           {
+            "name": "target_slot",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "breakfast",
+                "lunch",
+                "dinner"
+              ],
+              "type": "string",
+              "default": "dinner",
+              "title": "Target Slot"
+            }
+          },
+          {
+            "name": "target_meal_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Meal Id"
+            }
+          },
+          {
             "name": "servings",
             "in": "query",
             "required": false,
@@ -970,6 +1002,53 @@
               },
               "default": [],
               "title": "Preferred Ids"
+            }
+          },
+          {
+            "name": "exclude",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 300,
+              "default": "",
+              "title": "Exclude"
+            }
+          },
+          {
+            "name": "prefer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 300,
+              "default": "",
+              "title": "Prefer"
+            }
+          },
+          {
+            "name": "ready_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Ready Only"
+            }
+          },
+          {
+            "name": "recipe_source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "personal",
+                "starter"
+              ],
+              "type": "string",
+              "default": "all",
+              "title": "Recipe Source"
             }
           },
           {
@@ -1073,13 +1152,16 @@
               "recipe.save",
               "recipe.archive",
               "recipe.restore",
+              "recipe.delete",
               "lot.create",
+              "lot.quick_add",
               "lot.patch",
               "lot.archive",
               "lot.restore",
               "lot.use",
               "meal.save",
               "meal.state",
+              "meal.skip_followup",
               "meal.copy",
               "meal.cook",
               "shopping.add",
@@ -1576,12 +1658,74 @@
             ],
             "title": "Target Date"
           },
+          "target_slot": {
+            "type": "string",
+            "enum": [
+              "breakfast",
+              "lunch",
+              "dinner"
+            ],
+            "title": "Target Slot",
+            "default": "dinner"
+          },
+          "target_meal_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Meal Id"
+          },
           "servings": {
             "type": "number",
             "maximum": 12.0,
             "minimum": 0.1,
             "title": "Servings",
             "default": 1
+          },
+          "max_minutes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1440.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Minutes"
+          },
+          "exclude": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Exclude",
+            "default": ""
+          },
+          "prefer": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Prefer",
+            "default": ""
+          },
+          "ready_only": {
+            "type": "boolean",
+            "title": "Ready Only",
+            "default": false
+          },
+          "recipe_source": {
+            "type": "string",
+            "enum": [
+              "all",
+              "personal",
+              "starter"
+            ],
+            "title": "Recipe Source",
+            "default": "all"
           }
         },
         "additionalProperties": false,

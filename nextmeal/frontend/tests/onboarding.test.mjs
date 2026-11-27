@@ -4,12 +4,12 @@ import {build} from 'esbuild';
 import {unlink} from 'node:fs/promises';
 import {JSDOM} from 'jsdom';
 
-test('a visitor tries sample meals without login or any account data request',async()=>{
+test('a visitor sees signup and login without sample recipes or account data requests',async()=>{
  const dom=new JSDOM('<html><body></body></html>',{url:'http://localhost/'});
  global.window=dom.window;global.document=dom.window.document;global.HTMLElement=dom.window.HTMLElement;
  global.IS_REACT_ACT_ENVIRONMENT=true;window.scrollTo=()=>{};
  const React=await import('react');
- const {render,screen,fireEvent,within,cleanup}=await import('@testing-library/react');
+ const {render,screen,fireEvent,waitFor,cleanup}=await import('@testing-library/react');
  const output=new URL('./.onboarding-generated.mjs',import.meta.url);
  const originalFetch=global.fetch,requests=[];
  global.fetch=async url=>{
@@ -20,13 +20,14 @@ test('a visitor tries sample meals without login or any account data request',as
  try {
   await build({entryPoints:['src/IntegratedApp.jsx'],outfile:output.pathname,bundle:true,platform:'node',format:'esm',external:['react','lucide-react'],define:{'import.meta.env':'{}'}});
   const App=(await import(output.href)).default;render(React.createElement(App));
-  fireEvent.click(await screen.findByRole('button',{name:'샘플로 먼저 체험하기'}));
-  const trial=within(screen.getByRole('dialog',{name:'샘플 냉장고로 체험하기'}));
-  const milk=trial.getByRole('checkbox',{name:/우유/});
-  assert.equal(milk.checked,true);fireEvent.click(milk);
-  fireEvent.click(trial.getAllByRole('button',{name:'이 메뉴 선택'})[0]);
-  assert.match(trial.getByRole('status').textContent,/내 식사에 저장하려면/);
-  fireEvent.click(trial.getByRole('button',{name:'내 계정으로 시작하기'}));
+  assert.ok(await screen.findByRole('button',{name:'로그인'}));
+  assert.equal(screen.queryByRole('button',{name:'샘플로 먼저 체험하기'}),null);
+  await waitFor(()=>{
+   const signup=screen.getByRole('button',{name:'회원가입'});
+   assert.equal(signup.disabled,false);
+   fireEvent.click(signup);
+  });
+  assert.ok(await screen.findByRole('button',{name:'가입하기'}));
   assert.equal(screen.queryByRole('dialog'),null);
   assert.deepEqual(requests,['/app-config']);
   assert.equal(window.sessionStorage.length,0);

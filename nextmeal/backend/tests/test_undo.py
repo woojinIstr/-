@@ -5,7 +5,7 @@ import unittest
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
-from app.main import create_app, SEEDS
+from app.main import create_app
 from app.workspace import today
 
 
@@ -15,8 +15,8 @@ class UndoTests(unittest.TestCase):
         self.path = self.tmp.name + '/undo.db'
         self.app = create_app('local', self.path)
         self.client = TestClient(self.app)
-        self.ing = SEEDS[0]['ingredient_id']
-        self.milk = SEEDS[4]['ingredient_id']
+        self.ing = self.send('ingredient.create', dict(name='닭가슴살', unit='g'))['workspace']['ingredients'][-1]['id']
+        self.milk = self.send('ingredient.create', dict(name='우유', unit='ml'))['workspace']['ingredients'][-1]['id']
 
     def tearDown(self):
         self.client.close()

@@ -14,6 +14,9 @@ from uuid import UUID, uuid4
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .starter_recipes import starter_recipe_for_plan
+from .ingredient_names import canonical_name, name_key, stock_keys
+
 def uid(): return str(uuid4())
 def now(): return datetime.now(timezone.utc).isoformat()
 def today(): return (datetime.now(timezone(timedelta(hours=9)))).date().isoformat()
@@ -48,6 +51,8 @@ Positive = Annotated[float, Field(strict=True, gt=0, le=1000000000)]
 Name = Annotated[str, Field(min_length=1,max_length=100)]
 Unit = Literal['g','ml','count']
 InputUnit = Literal['g','kg','ml','L','count']
+MealSlot = Literal['breakfast','lunch','dinner']
+MEAL_SLOTS = {'breakfast': 0, 'lunch': 1, 'dinner': 2}
 
 class Ingredient(Model):
     name: Name
@@ -92,6 +97,18 @@ class Lot(Model):
         if self.expires_on and self.expires_on<self.purchased_on: fail('소비기한은 구매일보다 빠를 수 없습니다.')
         if self.opened_on and (self.opened_on<self.purchased_on or self.opened_on.isoformat()>today()): fail('개봉일은 구매일 이후, 오늘 이하여야 합니다.')
         return self
+class QuickStockRow(Model):
+    name: Name
+    quantity: Positive
+    unit: Literal['g','kg','ml','L','count','pack']
+    pack_size: Positive | None = None
+    pack_label: str = Field(default='팩', min_length=1, max_length=20)
+    product_id: UUID | None = None
+
+
+class QuickStock(Model):
+    items: list[QuickStockRow] = Field(min_length=1,max_length=12)
+
 class LotPatch(Model):
     id: UUID
     quantity: Quantity
@@ -106,8 +123,9 @@ class Use(Model):
     reason: Literal['use','waste']
 class Meal(Model):
     id: UUID | None = None
+    after_eating_out: UUID | None = None
     date: date
-    slot: Literal['breakfast','lunch','dinner']
+    slot: MealSlot
     recipe_id: UUID
     servings: float = Field(strict=True,ge=0.1,le=12)
     repeat_days: int = Field(default=1,strict=True,ge=1,le=31)
@@ -123,14 +141,14 @@ class Manual(Model):
     unit: str = Field(min_length=1,max_length=20)
 class CheckManual(Key): checked: bool
 
-MODELS = {'ingredient.create':Ingredient,'recipe.save':Recipe,'recipe.archive':Key,'recipe.restore':Key,
-          'lot.create':Lot,'lot.patch':LotPatch,'lot.archive':Key,'lot.restore':Key,'lot.use':Use,
-          'meal.save':Meal,'meal.state':MealState,'meal.copy':CopyDay,'meal.cook':Cook,
+MODELS = {'ingredient.create':Ingredient,'recipe.save':Recipe,'recipe.archive':Key,'recipe.restore':Key,'recipe.delete':Key,
+          'lot.create':Lot,'lot.quick_add':QuickStock,'lot.patch':LotPatch,'lot.archive':Key,'lot.restore':Key,'lot.use':Use,
+          'meal.save':Meal,'meal.state':MealState,'meal.skip_followup':Key,'meal.copy':CopyDay,'meal.cook':Cook,
           'shopping.add':Manual,'shopping.check':CheckManual,'shopping.archive':Key,'shopping.restore':Key,
           'history.undo':Key}
 
 def bootstrap(ingredients, recipes, parts, inventory, meals):
-    state = {'schema':3,'ingredients':[],'recipes':[],'products':[],'inventory':[], 'meals':[], 'manual':[], 'history':[], 'requests':[]}
+    state = {'schema':3,'ingredients':[],'recipes':[],'products':[],'inventory':[], 'meals':[], 'manual':[], 'history':[], 'requests':[], 'meal_followups':{}}
     state['ingredients'] = [dict(id=i['ingredient_id'],name=i['ingredient_name'],unit=i['unit']) for i in ingredients]
     for r in recipes:
         state['recipes'].append(dict(id=r['recipe_id'],name=r['recipe_name'],base_servings=r['base_servings'],minutes=r['cooking_time_minutes'],description=r['description'],instructions='',archived=False,
@@ -149,22 +167,114 @@ def requirements(meal):
 def usable(lot, on):
     return not lot.get('archived') and lot['quantity']>0 and (not lot.get('expires_on') or lot['expires_on']>=on) and (not lot.get('purchased_on') or lot['purchased_on']<=on)
 def ordered_lots(state, ingredient_id, on):
-    return sorted([i for i in state['inventory'] if i['ingredient_id']==ingredient_id and usable(i,on)],key=lambda i:(i.get('expires_on') or '9999-12-31',i.get('purchased_on') or '0000-01-01',{'fridge':0,'pantry':1,'freezer':2}[i['storage']],i['id']))
+    selected = state['stock_keys'][ingredient_id]
+    return sorted((lot for lot in state['inventory']
+                   if state['stock_keys'].get(lot['ingredient_id']) == selected and lot['unit'] == selected[1] and usable(lot, on)),
+                  key=lambda lot: (lot.get('expires_on') or '9999-12-31', lot.get('purchased_on') or '0000-00-01',
+                                   {'fridge':0,'pantry':1,'freezer':2}[lot['storage']], lot['id']))
+
+
+def meal_order(meal):
+    return meal['date'], MEAL_SLOTS[meal['slot']]
+
+
+def planned_meals(state):
+    current_day = today()
+    # Stable sorting gives earlier entries within the same slot first use.
+    return sorted((meal for meal in state.get('meals', [])
+                   if meal['status'] == 'planned' and meal['date'] >= current_day), key=meal_order)
+
+def next_home_slot(state, source):
+    target = next((meal for meal in planned_meals(state) if meal_order(meal) > meal_order(source)), None)
+    if target:
+        return dict(target_id=target['id'], date=target['date'], slot=target['slot'])
+    slot_index = MEAL_SLOTS[source['slot']] + 1
+    if slot_index == len(MEAL_SLOTS):
+        if source['date'] == date.max.isoformat():
+            return None
+        return dict(target_id=None, date=day_after(source['date'], 1), slot='breakfast')
+    return dict(target_id=None, date=source['date'], slot=tuple(MEAL_SLOTS)[slot_index])
+
+
+def active_followups(state):
+    current_day = today()
+    meals = {meal['id']: meal for meal in state['meals']}
+    pending = state.get('meal_followups')
+    if pending is None:
+        # Older releases did not link a subsequent save back to the external meal.
+        # Recover recent, identifiable transitions only until a later plan edit makes intent ambiguous.
+        yesterday = day_after(current_day, -1)
+        recent = {meal.get('change_id'): meal for meal in meals.values()
+                  if meal['status'] == 'eating_out' and meal['date'] >= yesterday}
+        pending = {}
+        for event in state.get('history', []):
+            if event['action'] in ('meal.save', 'meal.copy', 'meal.cook'):
+                break
+            source = recent.get(event['id'])
+            if source and event['action'] == 'meal.state':
+                pending[source['id']] = next_home_slot(state, source)
+    result = {}
+    for source_id, slot in pending.items():
+        source = meals.get(source_id)
+        if not source or source['status'] != 'eating_out' or not slot:
+            continue
+        if not slot['target_id']:
+            # Keep an unplanned next meal available through the following calendar day.
+            if source['date'] < day_after(current_day, -1):
+                continue
+            slot = next_home_slot(state, source)
+            if slot and slot['date'] < current_day:
+                slot = dict(target_id=None, date=current_day, slot='breakfast')
+        if not slot or slot['date'] < current_day:
+            continue
+        if slot['target_id']:
+            target = meals.get(slot['target_id'])
+            if not target or target['status'] != 'planned' or meal_order(target) != meal_order(slot):
+                continue
+        result[source_id] = slot
+    return result
+
+
+def reserve_part(working, part, day):
+    remaining = dec(part['quantity'])
+    for lot in ordered_lots(working, part['ingredient_id'], day):
+        amount = min(dec(lot['quantity']), remaining)
+        lot['quantity'] = number(dec(lot['quantity']) - amount)
+        remaining -= amount
+        if remaining == 0:
+            break
+    return remaining
+
+
+def stock_for_meal(state, day, slot, meal_id=None):
+    working = {'inventory': deepcopy(state.get('inventory', [])), 'stock_keys': stock_keys(state['ingredients'])}
+    target = (day, MEAL_SLOTS[slot])
+    for meal in planned_meals(state):
+        order = meal_order(meal)
+        if order > target or (order == target and meal['id'] == meal_id):
+            break
+        if meal['id'] == meal_id:
+            continue
+        for part in requirements(meal):
+            reserve_part(working, part, meal['date'])
+    return working['inventory']
+
 
 def shopping(state):
-    working = deepcopy(state)
-    totals={}
-    planned=sorted([m for m in state['meals'] if m['status']=='planned' and m['date']>=today()],key=lambda m:(m['date'],{'breakfast':0,'lunch':1,'dinner':2}[m['slot']],m['id']))
-    for m in planned:
-        for part in requirements(m):
-            ingredient=find(state,'ingredients',part['ingredient_id'])
-            row=totals.setdefault(ingredient['id'],dict(ingredient_id=ingredient['id'],name=ingredient['name'],unit=ingredient['unit'],required=0,shortage=0))
-            row['required']=number(dec(row['required'])+dec(part['quantity']))
-            remain=dec(part['quantity'])
-            for lot in ordered_lots(working,ingredient['id'],m['date']):
-                amount=min(dec(lot['quantity']),remain);lot['quantity']=number(dec(lot['quantity'])-amount);remain-=amount
-            row['shortage']=number(dec(row['shortage'])+remain)
-    return [v for v in totals.values() if v['shortage']>0]
+    keys = stock_keys(state['ingredients'])
+    working = {'inventory': deepcopy(state['inventory']), 'stock_keys': keys}
+    totals = {}
+    ingredients = {}
+    for item in state['ingredients']:
+        ingredients.setdefault(keys[item['id']], item)
+    for meal in planned_meals(state):
+        for part in requirements(meal):
+            ingredient = ingredients[keys[part['ingredient_id']]]
+            row = totals.setdefault(ingredient['id'], dict(ingredient_id=ingredient['id'], name=ingredient['name'],
+                                                           unit=ingredient['unit'], required=0, shortage=0))
+            row['required'] = number(dec(row['required']) + dec(part['quantity']))
+            row['shortage'] = number(dec(row['shortage']) + reserve_part(working, part, meal['date']))
+    return [row for row in totals.values() if row['shortage'] > 0]
 
 def present(state, revision):
     return {'revision':revision,'workspace':state,'shopping':shopping(state),'today':today()}
@@ -300,11 +410,73 @@ def undo_event(state, event_id, reversal_id):
     event.update(undone_at=now(), undone_by=reversal_id)
     return f"기록 되돌림 · {event['summary']}"
 
+def create_lot(state, body):
+    manual = active(find(state,'manual',body['manual_id'])) if body['manual_id'] else None
+    if manual and manual.get('received_lot_id'):
+        fail('이미 재고에 반영한 장보기 항목입니다. 새 구매는 장보기 항목을 새로 추가하세요.',409)
+    ing = (register_ingredient(state, body['new_ingredient'], reuse=True)
+           if body['new_ingredient'] else find(state, 'ingredients', body['ingredient_id']))
+    pack_size=None;pack_label='';estimated=body['estimated']
+    if body['product_id']:
+        product=find(state,'products',body['product_id'])
+        if product['ingredient_id']!=ing['id'] or body['input_unit']!='pack': fail('선택한 제품과 재료·구입 단위가 일치하지 않습니다.')
+        pack_size=product['pack_size'];pack_label=product['pack_label'];estimated=product['estimated']
+        if not body['name']: body['name']=product['name']
+    elif body['input_unit']=='pack':
+        if body['pack_size'] is None: fail('1개 또는 1팩당 내용량을 입력하세요.')
+        pack_size=converted(body['pack_size'],body['content_unit'],ing['unit']);pack_label=body['pack_label']
+    quantity=number(dec(body['input_quantity'])*dec(pack_size)) if pack_size else converted(body['input_quantity'],body['input_unit'],ing['unit'])
+    if quantity<=0: fail('환산한 수량이 너무 작습니다.')
+    if body['save_product'] and pack_size and not body['product_id']:
+        product=dict(id=uid(),ingredient_id=ing['id'],name=body['name'].strip() or ing['name'],pack_size=pack_size,pack_label=pack_label,estimated=estimated)
+        same=next((p for p in state['products'] if all(p[k]==product[k] for k in ['ingredient_id','name','pack_size','pack_label','estimated'])),None)
+        if not same: state['products'].append(product)
+    lot=dict(id=uid(),ingredient_id=ing['id'],name=body['name'].strip(),quantity=quantity,unit=ing['unit'],storage=body['storage'],purchased_on=body['purchased_on'],expires_on=body['expires_on'],opened_on=body['opened_on'],pack_size=pack_size,pack_label=pack_label,estimated=estimated,archived=False,created_at=now())
+    state['inventory'].append(lot)
+    if manual:
+        manual.update(checked=True,received_lot_id=lot['id'])
+    return ing, quantity
+
+
+def create_quick_lot(state, item):
+    packed = item['unit'] == 'pack'
+    base = {'g': 'g', 'kg': 'g', 'ml': 'ml', 'L': 'ml', 'count': 'count', 'pack': 'g'}[item['unit']]
+    key = (canonical_name(item['name']), base)
+    keys = stock_keys(state['ingredients'])
+    if not packed and (item['product_id'] or item['pack_size']):
+        fail('포장 재료에서만 포장 내용량과 제품을 선택할 수 있어요.')
+    if item['product_id']:
+        product = find(state, 'products', item['product_id'])
+        if keys.get(product['ingredient_id']) != key or product.get('estimated') or item['pack_size']:
+            fail('입력한 재료에 맞는 확인된 포장 제품을 선택하세요.')
+        ingredient = find(state, 'ingredients', product['ingredient_id'])
+    else:
+        ingredient = next((row for row in state['ingredients'] if keys[row['id']] == key), None)
+        if ingredient is None:
+            name = item['name'].strip()
+            names = {name_key(row['name']) for row in state['ingredients']}
+            if name_key(name) in names:
+                name = f"{name[:85]} ({unit_label(base)})"
+                ordinal = 2
+                while name_key(name) in names:
+                    name = f"{item['name'].strip()[:85]} ({unit_label(base)} {ordinal})"
+                    ordinal += 1
+            ingredient = register_ingredient(state, dict(name=name, unit=base))
+            if canonical_name(name) != key[0]:
+                ingredient['canonical_name'] = key[0]
+    lot = Lot(ingredient_id=ingredient['id'], product_id=item['product_id'], input_quantity=item['quantity'],
+              input_unit=item['unit'], pack_size=item['pack_size'], pack_label=item['pack_label'],
+              save_product=packed, content_unit='g', purchased_on=date.fromisoformat(today()))
+    create_lot(state, lot.model_dump(mode='json'))
+    return ingredient
+
+
 def apply(original, action, raw):
     state=deepcopy(original)
     if action not in MODELS: fail('지원하지 않는 작업입니다.')
     body=MODELS[action].model_validate(raw).model_dump(mode='json')
     event_id=uid()
+    pending = state['meal_followups'] = active_followups(original)
     summary=action
     if action=='ingredient.create':
         ingredient = register_ingredient(state, body)
@@ -323,34 +495,18 @@ def apply(original, action, raw):
         if existing: existing.update(body)
         else: state['recipes'].append(body)
         summary=f"메뉴 저장 · {body['name']} (기존 식사 계획은 유지)"
-    elif action.startswith('recipe.'):
+    elif action=='recipe.delete':
+        recipe=find(state,'recipes',body['id'])
+        state['recipes'].remove(recipe)
+        summary=f"메뉴 삭제 · {recipe['name']}"
+    elif action in ('recipe.archive','recipe.restore'):
         r=find(state,'recipes',body['id']);r['archived']=action.endswith('archive');summary=f"메뉴 {'보관' if r['archived'] else '복원'} · {r['name']}"
     elif action=='lot.create':
-        manual = active(find(state,'manual',body['manual_id'])) if body['manual_id'] else None
-        if manual and manual.get('received_lot_id'):
-            fail('이미 재고에 반영한 장보기 항목입니다. 새 구매는 장보기 항목을 새로 추가하세요.',409)
-        ing = (register_ingredient(state, body['new_ingredient'], reuse=True)
-               if body['new_ingredient'] else find(state, 'ingredients', body['ingredient_id']))
-        pack_size=None;pack_label='';estimated=body['estimated']
-        if body['product_id']:
-            product=find(state,'products',body['product_id'])
-            if product['ingredient_id']!=ing['id'] or body['input_unit']!='pack': fail('선택한 제품과 재료·구입 단위가 일치하지 않습니다.')
-            pack_size=product['pack_size'];pack_label=product['pack_label'];estimated=product['estimated']
-            if not body['name']: body['name']=product['name']
-        elif body['input_unit']=='pack':
-            if body['pack_size'] is None: fail('1개 또는 1팩당 내용량을 입력하세요.')
-            pack_size=converted(body['pack_size'],body['content_unit'],ing['unit']);pack_label=body['pack_label']
-        quantity=number(dec(body['input_quantity'])*dec(pack_size)) if pack_size else converted(body['input_quantity'],body['input_unit'],ing['unit'])
-        if quantity<=0: fail('환산한 수량이 너무 작습니다.')
-        if body['save_product'] and pack_size and not body['product_id']:
-            product=dict(id=uid(),ingredient_id=ing['id'],name=body['name'].strip() or ing['name'],pack_size=pack_size,pack_label=pack_label,estimated=estimated)
-            same=next((p for p in state['products'] if all(p[k]==product[k] for k in ['ingredient_id','name','pack_size','pack_label','estimated'])),None)
-            if not same: state['products'].append(product)
-        lot=dict(id=uid(),ingredient_id=ing['id'],name=body['name'].strip(),quantity=quantity,unit=ing['unit'],storage=body['storage'],purchased_on=body['purchased_on'],expires_on=body['expires_on'],opened_on=body['opened_on'],pack_size=pack_size,pack_label=pack_label,estimated=estimated,archived=False,created_at=now())
-        state['inventory'].append(lot)
-        if manual:
-            manual.update(checked=True,received_lot_id=lot['id'])
-        summary=f"구매 등록 · {ing['name']} {quantity:g}{unit_label(ing['unit'])}"
+        ingredient, quantity = create_lot(state, body)
+        summary = f"구매 등록 · {ingredient['name']} {quantity:g}{unit_label(ingredient['unit'])}"
+    elif action=='lot.quick_add':
+        names = [create_quick_lot(state, item)['name'] for item in body['items']]
+        summary = '재고 추가 · ' + ', '.join(names)
     elif action=='lot.patch':
         lot=active(find(state,'inventory',body['id']))
         if body['purchased_on']>today() or (body['expires_on'] and body['expires_on']<body['purchased_on']) or (body['opened_on'] and not body['purchased_on']<=body['opened_on']<=today()): fail('구매일·소비기한·개봉일을 확인하세요.')
@@ -363,12 +519,28 @@ def apply(original, action, raw):
     elif action in ('lot.archive','lot.restore'):
         lot=find(state,'inventory',body['id']);lot['archived']=action.endswith('archive');summary=f"재고 {'숨김' if lot['archived'] else '복원'} · {find(state,'ingredients',lot['ingredient_id'])['name']}"
     elif action=='meal.save':
-        recipe=find(state,'recipes',body['recipe_id'])
         editing=find(state,'meals',body['id']) if body['id'] else None
-        if not editing or editing['recipe_id']!=recipe['id']: active(recipe)
+        previous_recipe_id = editing['recipe_id'] if editing else None
+        source_id = body['after_eating_out']
+        if source_id:
+            slot = pending.get(source_id)
+            if not slot or slot['target_id'] != body['id']:
+                fail('다음 집밥 계획이 변경됐어요. 최신 식사 계획을 확인하세요.', 409)
+            source = find(state, 'meals', source_id)
+            if (body['date'] < today() or meal_order(body) <= meal_order(source)
+                    or (editing and meal_order(body) != meal_order(slot)) or body['repeat_days'] != 1):
+                fail('외식 이후의 예정 식사를 선택하세요.', 422)
+            del pending[source_id]
+        if editing and editing['recipe_id']==body['recipe_id']:
+            recipe=editing['recipe']
+        else:
+            recipe_id = body['recipe_id']
+            recipe = starter_recipe_for_plan(state, recipe_id)
+            if recipe is None:
+                recipe = active(find(state, 'recipes', recipe_id))
         dates=[day_after(body['date'],i) for i in range(body['repeat_days'])]
         if body['id']:
-            meal=find(state,'meals',body['id'])
+            meal=editing
             before_label=meal_summary(state,meal)
             if meal['status']!='planned' or body['repeat_days']!=1: fail('예정 식사만 수정할 수 있습니다.',409)
             # Same recipe keeps its original snapshot unless the menu is explicitly changed.
@@ -380,11 +552,26 @@ def apply(original, action, raw):
                 if any(m['date']==day and m['slot']==body['slot'] and m['recipe_id']==recipe['id'] and m['status']=='planned' for m in state['meals']): fail('같은 날짜·시간에 같은 메뉴가 이미 있습니다. 기존 식사의 인분을 수정하세요.',409)
                 state['meals'].append(dict(id=uid(),date=day,slot=body['slot'],recipe_id=recipe['id'],recipe=deepcopy(recipe),servings=body['servings'],status='planned',created_at=now()))
         if not body['id']: summary=f"식사 등록 · {body['date']} {recipe['name']} {body['servings']:g}인분 · {len(dates)}일"
+        for key, slot in list(pending.items()):
+            if slot['target_id'] and slot['target_id'] == body['id']:
+                if source_id or recipe['id'] != previous_recipe_id:
+                    del pending[key]
+            elif not slot['target_id'] and slot['date'] in dates and slot['slot'] == body['slot']:
+                del pending[key]
     elif action=='meal.state':
         meal=find(state,'meals',body['id'])
         if meal['status']=='cooked' or meal['status']==body['status'] or (meal['status']!='planned' and body['status']!='planned'): fail('현재 식사 상태에서는 변경할 수 없습니다.',409)
         status_labels={'planned':'예정','eating_out':'외식','cancelled':'취소'}
         old_status=meal['status'];meal['status']=body['status'];summary=f"식사 상태 변경 · {meal_summary(state,meal)} · {status_labels[old_status]} → {status_labels[body['status']]}"
+        if body['status'] == 'eating_out':
+            slot = next_home_slot(state, meal)
+            if slot:
+                pending[meal['id']] = slot
+    elif action=='meal.skip_followup':
+        if body['id'] not in pending:
+            fail('이미 정리된 다음 집밥 안내입니다.', 409)
+        del pending[body['id']]
+        summary='다음 집밥 안내를 닫았어요.'
     elif action=='meal.copy':
         source=[m for m in state['meals'] if m['date']==body['source_date'] and m['status']=='planned']
         if not source: fail('복사할 예정 식사가 없습니다.')
@@ -399,12 +586,13 @@ def apply(original, action, raw):
         meal=find(state,'meals',body['id'])
         if meal['status']!='planned': fail('이미 처리한 식사입니다. 중복 차감하지 않습니다.',409)
         allowed={i['ingredient_id'] for i in meal['recipe']['ingredients']};seen=set();deductions=[]
+        stock = {'inventory':state['inventory'], 'stock_keys':stock_keys(state['ingredients'])}
         for part in body['usage']:
             if part['ingredient_id'] not in allowed or part['ingredient_id'] in seen: fail('메뉴에 있는 재료를 중복 없이 선택하세요.')
             seen.add(part['ingredient_id']);ing=find(state,'ingredients',part['ingredient_id']);remain=dec(converted(part['quantity'],part['unit'],ing['unit']))
-            for lot in ordered_lots(state,ing['id'],today()):
+            for lot in ordered_lots(stock,ing['id'],today()):
                 take=min(dec(lot['quantity']),remain)
-                if take>0: deductions.append(dict(lot_id=lot['id'],ingredient_id=ing['id'],quantity=number(take),unit=ing['unit']))
+                if take>0: deductions.append(dict(lot_id=lot['id'],ingredient_id=lot['ingredient_id'],quantity=number(take),unit=ing['unit']))
                 lot['quantity']=number(dec(lot['quantity'])-take);remain-=take
             if remain>0: fail(f"재고 부족 · {ing['name']} {number(remain):g}{ing['unit']}. 소비기한 지난 재고와 숨긴 재고는 제외합니다.",409)
         meal.update(status='cooked',used=deductions,cooked_at=now());summary=f"조리 완료 · {meal_summary(state,meal)}"
@@ -418,6 +606,7 @@ def apply(original, action, raw):
         item=find(state,'manual',body['id']);item['archived']=action.endswith('archive');summary=f"장보기 {'숨김' if item['archived'] else '복원'} · {item['name']}"
     elif action=='history.undo':
         summary=undo_event(state,body['id'],event_id)
+    state['meal_followups'] = active_followups(state)
     if action!='history.undo':
         mark_changes(original,state,event_id)
     event=dict(id=event_id,at=now(),action=action,summary=summary)

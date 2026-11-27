@@ -2,17 +2,13 @@
 """GPT re-ranking of strictly prefiltered, server-approved recipes."""
 import json
 import logging
-import os
 from contextlib import nullcontext
 
 from .conditions import ConditionError, parse_conditions
 from .engine import recommend
-from .diagnostics import FALLBACK_MESSAGES, configuration_status, failure_code
+from .diagnostics import FALLBACK_MESSAGES, OPENROUTER_URL, failure_code, openrouter_key, openrouter_model
 
 logger = logging.getLogger(__name__)
-
-OPENROUTER_URL = "https://openrouter.ai/api/v1"
-FREE_MODEL = "google/gemma-4-26b-a4b-it:free"
 
 
 class RecommendationResponseError(ValueError):
@@ -27,6 +23,13 @@ def recommend_with_gpt(
     today=None,
     default_date=None,
     default_servings=1.0,
+    target_slot='dinner',
+    target_meal_id=None,
+    ready_only=False,
+    recipe_source='all',
+    default_max_minutes=None,
+    excluded_ids=(),
+    preferred_ids=(),
 ):
     """Read-only; no storage mutations. client optional for deterministic tests."""
     try:
@@ -46,12 +49,29 @@ def recommend_with_gpt(
             'reason_code': 'conditions_unclear',
         }
 
-    candidates = recommend(workspace, **conditions, limit=10)
+    if target_meal_id and (conditions['target_date'] != default_date.isoformat()
+                           or conditions['servings'] != default_servings):
+        return {
+            'source': 'needs_input',
+            'message': '변경할 식사의 날짜와 인분으로 추천해요. 문장에서 날짜나 인분을 빼고 다시 요청해 주세요.',
+            'recommendations': [],
+            'conditions': None,
+            'reason_code': 'conditions_unclear',
+        }
+
+    conditions['ready_only'] = ready_only or conditions['ready_only']
+    limits = [limit for limit in (conditions['max_minutes'], default_max_minutes) if limit is not None]
+    conditions['max_minutes'] = min(limits) if limits else None
+    conditions['excluded_ids'] = list(dict.fromkeys([*conditions['excluded_ids'], *excluded_ids]))
+    candidates = recommend(workspace, **conditions, target_slot=target_slot,
+                           target_meal_id=target_meal_id, recipe_source=recipe_source,
+                           preferred_ids=preferred_ids, limit=10)
 
     if not candidates:
         return {
             'source': 'rules',
-            'message': '입력한 조건에 맞는 메뉴가 없습니다.',
+            'message': ('이 끼니에 남은 재료만으로 만들 수 있는 메뉴가 없어요.'
+                        if conditions['ready_only'] else '입력한 조건에 맞는 메뉴가 없습니다.'),
             'recommendations': [],
             'conditions': conditions,
             'reason_code': 'no_candidates',
@@ -63,7 +83,8 @@ def recommend_with_gpt(
         'conditions': conditions,
     }
 
-    api_key = os.getenv('OPENAI_API_KEY', '').strip()
+    api_key = openrouter_key()
+    model = openrouter_model()
 
     if not api_key and client is None:
         return {
@@ -118,7 +139,7 @@ def recommend_with_gpt(
 
             with connection as model_client:
                 response = model_client.responses.create(
-                    model=configuration_status()['model'],
+                    model=model,
                     instructions=instructions,
                     input=payload,
                     text={
@@ -155,18 +176,16 @@ def recommend_with_gpt(
             raw = getattr(response, 'output_text', None)
 
         else:
-            # Restrict live requests to OpenRouter's free-model router.
-            # Never select a paid model using environment configuration.
             from openai import OpenAI
 
             with OpenAI(
                 api_key=api_key,
                 base_url=OPENROUTER_URL,
-                timeout=30.0,
+                timeout=8.0,
                 max_retries=0,
             ) as model_client:
                 response = model_client.chat.completions.create(
-                    model=FREE_MODEL,
+                    model=model,
                     messages=[
                         {'role': 'system', 'content': instructions},
                         {'role': 'user', 'content': payload},
@@ -174,19 +193,9 @@ def recommend_with_gpt(
                     max_tokens=2500,
                 )
 
-            if not response.choices:
-                raise RecommendationResponseError('no choices')
-
-
+            if not response.choices or response.choices[0].finish_reason != 'stop':
+                raise RecommendationResponseError('incomplete ranking response')
             raw = response.choices[0].message.content
-
-            logger.warning(
-                "OpenRouter result: model=%s finish_reason=%s "
-                "completion_tokens=%s",
-                response.model,
-                response.choices[0].finish_reason,
-                getattr(response.usage, "completion_tokens", None),
-            )
 
         if not isinstance(raw, str) or not raw.strip():
             raise RecommendationResponseError('empty response')
@@ -244,6 +253,8 @@ def recommend_with_gpt(
                 len(ids),
                 len(valid_ids),
             )
+            # The original explanation may mention candidates that were discarded.
+            message = '조건에 맞는 등록 메뉴를 추천 순서대로 표시해요.'
 
         ids = valid_ids
 

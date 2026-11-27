@@ -10,12 +10,17 @@ function timingHeaders(response){
   return {server:stages,auth_method:authMethods.has(method)?method:'unknown',upstream_requests:count!==null&&count!==undefined&&/^\d+$/.test(count)?Number(count):null};
 }
 export function createWorkspaceClient(base, auth, local=false, onTiming=null) {
-  async function request(path,body) {
-    const started=performance.now();let response,timer;
+  async function request(path,body,signal) {
+    const started=performance.now();
+    const controller=new AbortController();
+    const abort=()=>controller.abort();
+    let response,timer;
     try {
       const token=local?'':await auth.accessToken();
       if(!local && !token)throw Object.assign(new Error('다시 로그인하세요.'),{status:401});
-      const controller=new AbortController();timer=setTimeout(()=>controller.abort(),45000);
+      if(signal?.aborted) abort();
+      signal?.addEventListener('abort',abort,{once:true});
+      timer=setTimeout(abort,45000);
       response=await fetch(base+path,{method:body?'POST':'GET',signal:controller.signal,headers:{...(token?{Authorization:'Bearer '+token}:{}),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
       const data=await response.json();
       if(!response.ok)throw Object.assign(new Error(typeof data.detail==='string'?data.detail:'입력값과 단위를 확인하세요.'),{
@@ -25,13 +30,15 @@ export function createWorkspaceClient(base, auth, local=false, onTiming=null) {
       return data;
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener('abort',abort);
       // Diagnostic failure must never make a completed save look unsuccessful.
-      if(onTiming)try{onTiming({path,method:body?'POST':'GET',status:response?.status||0,browser_ms:Number((performance.now()-started).toFixed(2)),...timingHeaders(response)});}catch{}
+      if(onTiming&&!signal?.aborted)try{onTiming({path:path.split('?')[0],method:body?'POST':'GET',status:response?.status||0,browser_ms:Number((performance.now()-started).toFixed(2)),...timingHeaders(response)});}catch{}
     }
   }
   return {
     load:()=>request('/v3/workspace'),
     recommend:body=>request('/v3/gpt-recommendations',body),
+    suggest:(query,signal)=>request('/v3/recommendations?'+query,undefined,signal),
     preview:c=>request('/v3/preview?compact=true',c),
     commit:c=>request('/v3/commands',c),
   };

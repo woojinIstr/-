@@ -7,6 +7,7 @@ EXTRA_INGREDIENTS = [
     {'ingredient_id':ingredient_id(n),'ingredient_name':name,'unit':unit}
     for n,name,unit in [(4,'밥','g'),(5,'우유','ml'),(6,'파스타면','g'),(7,'양파','g'),(8,'토마토 소스','g')]
 ]
+STARTER_INGREDIENT_IDS = frozenset(ingredient_id(n) for n in range(1, 9))
 RECIPE_FIXTURES = [
     (1,'닭가슴살 시금치 리소토',15,'닭가슴살과 시금치를 활용하는 간단한 한 끼',[(1,150,'g'),(2,100,'g'),(4,210,'g'),(5,150,'ml')]),
     (2,'닭가슴살 볶음밥',20,'닭가슴살과 밥을 활용하는 볶음밥',[(1,150,'g'),(4,210,'g'),(7,100,'g')]),

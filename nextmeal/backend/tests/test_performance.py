@@ -59,7 +59,13 @@ class PerformanceTests(unittest.TestCase):
 
  def test_compact_preview_size_and_no_mutation(self):
   with TemporaryDirectory() as tmp,TestClient(create_app('local',tmp+'/local.db')) as app:
-   state=app.get('/v3/workspace').json();body={'request_id':str(uuid4()),'expected_revision':state['revision'],'action':'ingredient.create','payload':{'name':'당근','unit':'g'}}
+   state=app.get('/v3/workspace').json()
+   stored=app.post('/v3/commands',json={
+    'request_id':str(uuid4()),'expected_revision':state['revision'],'action':'lot.quick_add',
+    'payload':{'items':[{'name':f'기존 재료 {n}','quantity':100,'unit':'g'} for n in range(8)]}})
+   self.assertEqual(stored.status_code,200)
+   state=app.get('/v3/workspace').json()
+   body={'request_id':str(uuid4()),'expected_revision':state['revision'],'action':'ingredient.create','payload':{'name':'당근','unit':'g'}}
    response=app.post('/v3/preview?compact=true',json=body);self.assertEqual(response.status_code,200)
    self.assertNotIn('workspace',response.text)
    old_size=len(json.dumps({'summary':'추가','before':state,'after':state},ensure_ascii=False,separators=(',',':')).encode())

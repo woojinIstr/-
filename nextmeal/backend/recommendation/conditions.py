@@ -9,6 +9,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from app.workspace import today as workspace_today
+from app.ingredient_names import ALIASES, canonical_name
 
 
 class ConditionError(ValueError):
@@ -30,62 +31,101 @@ UPPER_BOUND = re.compile(
 EXCLUSION = re.compile(
     r'제외|빼고|없이|안\s*넣고|넣지\s*말고|빼\s*(?:주세요|줘)'
 )
+PANTRY_ONLY = re.compile(
+    r'냉장고(?:에|에서)\s*(?:바로\s*)?만들\s*수\s*있는'
+    r'|(?:냉장고(?:에|에서)?\s*)?(?:현재\s*|지금\s*)?'
+    r'(?:있는|보유한|가진|남은)\s*(?:식재료|재료)(?:들)?\s*'
+    r'(?:만(?:으로|을)?(?:\s*(?:사용해서|이용해서|써서))?|(?:으로|로)\s*만들\s*수\s*있는)'
+    r'|추가\s*(?:구매|장보기)\s*(?:없이|안\s*하고)'
+)
 
-EGG_NAMES = frozenset({'달걀', '계란', '에그'})
-
-
-def _normalize(name):
-    return re.sub(r'\s+', '', name).casefold()
+INGREDIENT_NAMES = {label for name, aliases in ALIASES.items() for label in (name, *aliases)}
+INGREDIENT_JOIN = re.compile(
+    r'(?:(?P<or>/\s*|(?:또는|혹은|이나|나)\s+)'
+    r'|(?P<and>[,·]\s*|(?:하고|이랑|랑|과|와|및|그리고)\s+))$'
+)
+REQUIRED_CHOICE = re.compile(r'(중\s*하나(?:만)?|둘\s*다|모두)\s*$')
+INGREDIENT_PARTICLE = r'(?:을|를|이|가|으로|로|도)'
+REQUIRED_USE = (
+    r'(?:활용|사용|이용|포함)(?:하고|하되|한|해서|하여|하는)?'
+    r'|들어(?:있는|가는|간)|넣(?:어서|은|고)|만(?:든|드는)'
+)
 
 
 def _ingredient_ids(name, ingredients):
-    key = _normalize(name)
-    accepted = EGG_NAMES if key in EGG_NAMES else {key}
-    return [
-        item['id']
-        for item in ingredients
-        if _normalize(item['name']) in accepted
-    ]
+    key = canonical_name(name)
+    return [item['id'] for item in ingredients
+            if canonical_name(item.get('canonical_name', item['name'])) == key]
 
 
-def _required_ingredient_ids(text, ingredients):
-    """Identify explicitly required ingredients from known catalog names."""
+def _required_ingredients(text, ingredients):
+    """Return ingredient groups; a recipe needs one match from every group."""
     names = sorted(
-        {item['name'] for item in ingredients} | set(EGG_NAMES),
-        key=len,
-        reverse=True,
+        {item['name'] for item in ingredients} | INGREDIENT_NAMES,
+        key=lambda name: (-len(name), name),
     )
-
-    if not names:
-        return []
-
-    name_pattern = '|'.join(re.escape(name) for name in names)
-
-    # Examples:
-    # 달걀을 활용한, 양파를 사용한, 계란이 들어간
-    # 달걀로 만든, 시금치를 포함한
-    required_pattern = re.compile(
-        rf'(?<![가-힣A-Za-z0-9])'
-        rf'(?P<name>{name_pattern})'
-        r'(?:을|를|이|가|로|으로|도)?\s*'
-        r'(?:'
-        r'활용(?:한|해서|하여|하는)?'
-        r'|사용(?:한|해서|하여|하는)?'
-        r'|이용(?:한|해서|하여|하는)?'
-        r'|포함(?:한|하는|해서)?'
-        r'|들어간|들어가는|들어있는|들어간'
-        r'|넣은|넣어서|넣고'
-        r'|만든|만드는'
-        r')',
+    catalog = '|'.join(re.escape(name) for name in names)
+    item = re.compile(
+        rf'(?<![가-힣A-Za-z0-9])(?:(?P<known>{catalog}){INGREDIENT_PARTICLE}?'
+        r'|(?P<other>[가-힣A-Za-z0-9][가-힣A-Za-z0-9_()-]*))\s*$',
         re.IGNORECASE,
     )
+    verbs = re.compile(rf'(?:{REQUIRED_USE})(?![가-힣A-Za-z0-9])')
+    # Prevent a negated verb such as '안 넣고' from registering a requirement.
+    text = EXCLUSION.sub(lambda marker: '|' * len(marker[0]), text)
+    groups, exclusive, used = [], [], []
+    cursor = 0
+    for verb in verbs.finditer(text):
+        clause = text[cursor:verb.start()]
+        choice = REQUIRED_CHOICE.search(clause)
+        end = choice.start() if choice else len(clause)
+        part = item.search(clause, 0, end)
+        if not part:
+            cursor = verb.end()
+            continue
 
-    ids = []
-    for match in required_pattern.finditer(text):
-        name = match.group('name')
-        ids.extend(_ingredient_ids(name, ingredients))
+        terms, operators = [], set()
+        start = part.start()
+        while part:
+            terms.append(part.group('known') or part.group('other'))
+            start = part.start()
+            join = INGREDIENT_JOIN.search(clause, 0, start)
+            if not join:
+                break
+            previous = item.search(clause, 0, join.start())
+            if not previous or previous[0].strip() in {'오늘', '내일', '모레', '아침', '점심', '저녁'}:
+                break
+            operators.add(join.lastgroup)
+            part = previous
 
-    return list(dict.fromkeys(ids))
+        start += cursor
+        cursor = verb.end()
+        if len(terms) == 1 and re.fullmatch(
+            rf'(?:재료|식재료|재고|것|걸){INGREDIENT_PARTICLE}?', terms[0]
+        ):
+            continue
+        if len(operators) > 1 and not choice:
+            raise ConditionError('모두 넣을 재료와 둘 중 하나만 넣을 재료를 나누어 입력해 주세요.')
+
+        alternatives = choice[1].startswith('중') if choice else operators == {'or'}
+        if alternatives and len(terms) < 2:
+            raise ConditionError('둘 중 하나를 고르려면 재료 이름을 두 개 이상 입력해 주세요.')
+
+        condition_groups = []
+        for name in reversed(terms):
+            ids = _ingredient_ids(name, ingredients)
+            if not ids:
+                cleaned = re.sub(r'(?:을|를|이|가|으로|로)$', '', name) or name
+                raise ConditionError(f'필수 재료 “{cleaned}”를 등록한 식재료에서 찾을 수 없어요. 이름을 확인해 주세요.')
+            condition_groups.append(ids)
+        if alternatives:
+            if choice and choice[1].endswith('만'):
+                distinct_options = list(dict.fromkeys(tuple(group) for group in condition_groups))
+                exclusive.append([list(option) for option in distinct_options])
+            condition_groups = [list(dict.fromkeys(i for group in condition_groups for i in group))]
+        groups.extend(condition_groups)
+        used.append((start, verb.end()))
+    return groups, exclusive, used
 
 
 def parse_conditions(
@@ -104,9 +144,13 @@ def parse_conditions(
         'max_minutes': None,
         'excluded_ids': [],
         'required_ids': [],
+        'required_groups': [],
+        'exclusive_groups': [],
     }
 
-    used = []
+    pantry_phrases = list(PANTRY_ONLY.finditer(text))
+    result['ready_only'] = bool(pantry_phrases)
+    used = [match.span() for match in pantry_phrases]
 
     # 1. Servings
     persons = list(SERVINGS.finditer(text))
@@ -256,7 +300,16 @@ def parse_conditions(
             '날짜를 YYYY-MM-DD 형식으로 직접 선택해 주세요.'
         )
 
-    # 4. Remove parsed servings/time spans for exclusion parsing
+    required_text = text
+    for start, end in used:
+        suffix = re.match(r'(?:으로|로)(?:는)?', text[end:])
+        if suffix:
+            end += suffix.end()
+        required_text = required_text[:start] + '|' * (end - start) + required_text[end:]
+    required_groups, exclusive_groups, required_spans = _required_ingredients(required_text, ingredients)
+    used.extend(required_spans)
+
+    # Exclusions parse only text outside recognized positive conditions.
     remaining_text = text
 
     for start, end in sorted(used, reverse=True):
@@ -326,17 +379,15 @@ def parse_conditions(
         dict.fromkeys(result['excluded_ids'])
     )
 
-    # 6. Required ingredients
-    result['required_ids'] = _required_ingredient_ids(
-        text,
-        ingredients,
-    )
-
-    # 7. Prevent contradictory conditions
-    if set(result['required_ids']) & set(result['excluded_ids']):
+    excluded = set(result['excluded_ids'])
+    required_groups = [[i for i in group if i not in excluded] for group in required_groups]
+    if any(not group for group in required_groups):
         raise ConditionError(
             '같은 재료를 필수 재료와 제외 재료로 '
             '동시에 지정할 수 없습니다.'
         )
 
+    result['required_groups'] = required_groups
+    result['exclusive_groups'] = exclusive_groups
+    result['required_ids'] = list(dict.fromkeys(i for group in required_groups for i in group))
     return result

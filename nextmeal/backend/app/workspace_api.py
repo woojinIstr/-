@@ -11,8 +11,45 @@ from uuid import UUID
 from fastapi import Depends, HTTPException, Query
 from fastapi.exceptions import RequestValidationError
 from pydantic import Field, ValidationError
-from .workspace import Model, MODELS, apply, bootstrap, fingerprint, history_status, inventory_changes, meal_changes, present, shopping
+from .catalog import RECIPES, RECIPE_INGREDIENTS, STARTER_INGREDIENT_IDS
+from .workspace import Model, MODELS, active_followups, apply, bootstrap, fingerprint, history_status, inventory_changes, meal_changes, present, shopping
 from .timing import measure
+
+
+def recipe_contents(recipe):
+    return {
+        **recipe,
+        'archived': False,
+        'ingredients': sorted(recipe['ingredients'], key=lambda part: part['ingredient_id']),
+    }
+
+
+SAMPLE_RECIPES = {
+    recipe['id']: recipe_contents(recipe)
+    for recipe in bootstrap([], RECIPES, RECIPE_INGREDIENTS, [], [])['recipes']
+}
+
+
+def without_unused_samples(document):
+    # A saved meal can still be edited using its original recipe reference.
+    meal_recipe_ids = {meal['recipe_id'] for meal in document['meals']}
+    recipes = [
+        recipe for recipe in document['recipes']
+        if recipe['id'] in meal_recipe_ids
+        or recipe['id'] not in SAMPLE_RECIPES
+        or recipe_contents(recipe) != SAMPLE_RECIPES[recipe['id']]
+    ]
+    referenced = {row['ingredient_id'] for row in document['inventory'] + document['products']}
+    for recipe in recipes:
+        referenced.update(part['ingredient_id'] for part in recipe['ingredients'])
+    for meal in document['meals']:
+        referenced.update(part['ingredient_id'] for part in meal['recipe']['ingredients'])
+    ingredients = [
+        row for row in document['ingredients']
+        if row['id'] not in STARTER_INGREDIENT_IDS or row['id'] in referenced
+    ]
+    return {**document, 'recipes': recipes, 'ingredients': ingredients}
+
 
 class Command(Model):
     request_id: UUID
@@ -59,18 +96,21 @@ class Repository:
 
     def load(self, owner, token):
         existing=self.get(owner,token)
-        if existing:return existing
-        tasks=[('ingredients',None),('recipes',None),('recipe_ingredients',None),('inventory',owner),('meals',owner)]
-        with ThreadPoolExecutor(5) as pool:
-            futures=[pool.submit(copy_context().run,self.legacy_list,table,token,owner_id) for table,owner_id in tasks]
-            values=[future.result() for future in futures]
-        initial=bootstrap(*values)
-        self.put(owner,token,-1,initial)
-        return self.get(owner,token)
+        if existing is None:
+            tasks=[('ingredients',None),('recipes',None),('recipe_ingredients',None),('inventory',owner),('meals',owner)]
+            with ThreadPoolExecutor(5) as pool:
+                futures=[pool.submit(copy_context().run,self.legacy_list,table,token,owner_id) for table,owner_id in tasks]
+                values=[future.result() for future in futures]
+            initial=without_unused_samples(bootstrap(*values))
+            self.put(owner,token,-1,initial)
+            existing=self.get(owner,token)
+        revision, document = existing
+        return revision, without_unused_samples(document)
 
 def response(document, revision):
     with measure('compute'):
         view=deepcopy(document);view.pop('requests',None)
+        view['meal_followups']=active_followups(document)
         view['history']=history_status(document)
         return present(view,revision)
 
@@ -85,7 +125,11 @@ def register_workspace_routes(app, legacy, identity, mode):
 
     def validate_apply(document, command):
         try:
-            with measure('compute'):return apply(document,command.action,command.payload)
+            with measure('compute'):
+                updated, summary = apply(document, command.action, command.payload)
+                if command.action in ('recipe.save', 'recipe.delete', 'meal.save'):
+                    updated = without_unused_samples(updated)
+                return updated, summary
         except ValidationError as error:raise RequestValidationError(error.errors())
 
     def revision_conflict():
@@ -99,8 +143,16 @@ def register_workspace_routes(app, legacy, identity, mode):
         projected,summary=validate_apply(document,command)
         if not compact:return {'summary':summary,'before':response(document,revision),'after':response(projected,revision)}
         with measure('compute'):
-            return {'summary':summary,'revision':revision,'before_shopping':shopping(document),'after_shopping':shopping(projected),
-                    'inventory_changes':inventory_changes(document,projected),'meal_changes':meal_changes(document,projected)}
+            result = {'summary':summary,'revision':revision,'before_shopping':shopping(document),'after_shopping':shopping(projected),
+                      'inventory_changes':inventory_changes(document,projected),'meal_changes':meal_changes(document,projected)}
+            if command.action == 'meal.save':
+                payload = command.payload
+                edited_id = str(UUID(str(payload['id']))) if payload.get('id') else None
+                prior_ids = {meal['id'] for meal in document['meals']}
+                meal = next(meal for meal in projected['meals']
+                            if meal['id'] == edited_id or meal['id'] not in prior_ids)
+                result['planned_recipe'] = {'id': meal['recipe_id'], 'name': meal['recipe']['name']}
+            return result
 
     @app.post('/v3/commands',tags=['통합본 v0.3'])
     def execute(command:Command,auth=Depends(identity)):

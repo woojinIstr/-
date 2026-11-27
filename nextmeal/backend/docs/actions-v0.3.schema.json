@@ -156,6 +156,21 @@
     "title": "Key",
     "type": "object"
   },
+  "recipe.delete": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "format": "uuid",
+        "title": "Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "title": "Key",
+    "type": "object"
+  },
   "lot.create": {
     "$defs": {
       "Ingredient": {
@@ -354,6 +369,97 @@
     "title": "Lot",
     "type": "object"
   },
+  "lot.quick_add": {
+    "$defs": {
+      "QuickStockRow": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "quantity": {
+            "exclusiveMinimum": 0,
+            "maximum": 1000000000,
+            "title": "Quantity",
+            "type": "number"
+          },
+          "unit": {
+            "enum": [
+              "g",
+              "kg",
+              "ml",
+              "L",
+              "count",
+              "pack"
+            ],
+            "title": "Unit",
+            "type": "string"
+          },
+          "pack_size": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "maximum": 1000000000,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pack Size"
+          },
+          "pack_label": {
+            "default": "팩",
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Pack Label",
+            "type": "string"
+          },
+          "product_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Product Id"
+          }
+        },
+        "required": [
+          "name",
+          "quantity",
+          "unit"
+        ],
+        "title": "QuickStockRow",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "items": {
+        "items": {
+          "$ref": "#/$defs/QuickStockRow"
+        },
+        "maxItems": 12,
+        "minItems": 1,
+        "title": "Items",
+        "type": "array"
+      }
+    },
+    "required": [
+      "items"
+    ],
+    "title": "QuickStock",
+    "type": "object"
+  },
   "lot.patch": {
     "additionalProperties": false,
     "properties": {
@@ -501,6 +607,19 @@
         "default": null,
         "title": "Id"
       },
+      "after_eating_out": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "After Eating Out"
+      },
       "date": {
         "format": "date",
         "title": "Date",
@@ -566,6 +685,21 @@
       "status"
     ],
     "title": "MealState",
+    "type": "object"
+  },
+  "meal.skip_followup": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "format": "uuid",
+        "title": "Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "title": "Key",
     "type": "object"
   },
   "meal.copy": {

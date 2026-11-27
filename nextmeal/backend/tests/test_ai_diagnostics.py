@@ -12,6 +12,7 @@ import httpx
 from openai import OpenAI
 
 from app.serve import create_app
+from recommendation.diagnostics import FREE_MODEL, openrouter_key
 from tools.check_ai import main as check_ai
 
 
@@ -21,10 +22,9 @@ class AIDiagnosticsTests(unittest.TestCase):
         self.enterContext(patch.dict(os.environ, {
             'APP_MODE': 'local', 'APP_ENV': 'development',
             'SQLITE_PATH': str(self.temp / 'test.db'),
-            'OPENAI_API_KEY': '', 'OPENAI_MODEL': '',
+            'OPENROUTER_API_KEY': '', 'OPENAI_API_KEY': '', 'OPENROUTER_MODEL': '',
         }))
         self.client = self.enterContext(TestClient(create_app()))
-
     def test_status_checks_configuration_without_network_or_workspace_changes(self):
         before = self.client.get('/v3/workspace').json()
         with patch('openai.OpenAI') as sdk:
@@ -34,9 +34,9 @@ class AIDiagnosticsTests(unittest.TestCase):
         self.assertEqual(response.headers['Cache-Control'], 'private, no-store')
         self.assertEqual(response.json(), {
             'check': 'configuration_only', 'key_configured': False,
-            'sdk_available': True, 'model': 'gpt-4.1-mini', 'version': '0.3.8',
+            'sdk_available': True, 'provider': 'openrouter', 'model': FREE_MODEL, 'version': '0.3.8',
         })
-        with patch.dict(os.environ, {'OPENAI_API_KEY': 'private-key-sentinel', 'OPENAI_MODEL': 'custom-model'}):
+        with patch.dict(os.environ, {'OPENROUTER_API_KEY': 'private-key-sentinel', 'OPENROUTER_MODEL': 'custom-model'}):
             configured = self.client.get('/v3/recommendation-status')
             self.assertTrue(configured.json()['key_configured'])
             self.assertEqual(configured.json()['model'], 'custom-model')
@@ -71,12 +71,10 @@ class AIDiagnosticsTests(unittest.TestCase):
                         raise httpx.ConnectError('private-key-sentinel', request=request)
                     if status == 200:
                         return httpx.Response(200, json={
-                            'id': 'resp_test', 'object': 'response', 'status': 'completed',
-                            'created_at': 1, 'model': 'gpt-4.1-mini',
-                            'output': [{'type': 'message', 'id': 'msg_test', 'role': 'assistant',
-                                        'status': 'completed', 'content': [
-                                            {'type': 'output_text', 'annotations': [], 'text': '{broken'},
-                                        ]}],
+                            'id': 'chatcmpl_test', 'object': 'chat.completion',
+                            'created': 1, 'model': FREE_MODEL,
+                            'choices': [{'index': 0, 'finish_reason': 'stop',
+                                         'message': {'role': 'assistant', 'content': '{broken'}}],
                         })
                     return httpx.Response(status, json={'error': {
                         'message': 'private-key-sentinel', 'code': code,
@@ -85,11 +83,11 @@ class AIDiagnosticsTests(unittest.TestCase):
                 def make_client(**kwargs):
                     return OpenAI(http_client=httpx.Client(transport=httpx.MockTransport(response)), **kwargs)
 
-                with patch.dict(os.environ, {'OPENAI_API_KEY': 'private-key-sentinel'}), \
+                with patch.dict(os.environ, {'OPENROUTER_API_KEY': 'private-key-sentinel'}), \
                         patch('openai.OpenAI', side_effect=make_client), \
                         self.assertLogs('recommendation.gpt', level='WARNING') as logs:
                     result = self.client.post('/v3/gpt-recommendations', json={
-                        'user_request': '달걀 제외 20분 이내 2인분',
+                        'user_request': '달걀 제외 20분 이내 2인분 '+code,
                     })
                 self.assertEqual(result.status_code, 200)
                 body = result.json()
@@ -114,15 +112,23 @@ class AIDiagnosticsTests(unittest.TestCase):
                 self.assertEqual((result['source'], result['reason_code']), (source, reason))
                 sdk.assert_not_called()
 
+    def test_only_legacy_openrouter_keys_are_reused(self):
+        with patch.dict(os.environ, {'OPENAI_API_KEY': 'sk-openai-test'}):
+            self.assertEqual(openrouter_key(), '')
+        with patch.dict(os.environ, {'OPENAI_API_KEY': 'sk-or-legacy-test'}):
+            self.assertEqual(openrouter_key(), 'sk-or-legacy-test')
+            with patch.dict(os.environ, {'OPENROUTER_API_KEY': 'new-key'}):
+                self.assertEqual(openrouter_key(), 'new-key')
+
     def test_live_checker_fails_for_fallback_and_only_calls_on_explicit_live(self):
         env = self.temp / 'test.env'
-        env.write_text('OPENAI_API_KEY=file-secret-sentinel\n', encoding='utf-8-sig')
+        env.write_text('OPENROUTER_API_KEY=file-secret-sentinel\n', encoding='utf-8-sig')
         output = StringIO()
         with patch('tools.check_ai.recommend_with_gpt') as recommend, redirect_stdout(output):
             # Existing environment overrides the file, matching the running server.
             self.assertEqual(check_ai(['--env-file', str(env), '--live']), 1)
             recommend.assert_not_called()
-        with patch.dict(os.environ, {'OPENAI_API_KEY': 'process-secret-sentinel'}), \
+        with patch.dict(os.environ, {'OPENROUTER_API_KEY': 'process-secret-sentinel'}), \
                 patch('tools.check_ai.recommend_with_gpt') as recommend, redirect_stdout(output):
             self.assertEqual(check_ai(['--env-file', str(env)]), 0)
             recommend.assert_not_called()

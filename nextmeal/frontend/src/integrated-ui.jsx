@@ -1,6 +1,6 @@
 import React, {useLayoutEffect, useRef} from 'react';
 import {X} from 'lucide-react';
-import {unitLabels,statusLabels} from './workspace-client';
+import {unitLabels,statusLabels,slotLabels} from './workspace-client';
 
 export const formatAmount = value => Number(value).toLocaleString('ko-KR', {maximumFractionDigits: 6});
 
@@ -78,7 +78,7 @@ export function Modal({title, busy, onClose, children, footer}) {
   </div>;
 }
 
-export function ChangeSummary({preview}) {
+export function ChangeSummary({preview, showRetainedShopping=false}) {
   const previous = preview.before_shopping || [];
   const next = preview.after_shopping || [];
   const changes = new Map(previous.map(row => [row.ingredient_id, {...row, before: row.shortage, after: 0}]));
@@ -90,6 +90,9 @@ export function ChangeSummary({preview}) {
     ['재고', preview.inventory_changes || []],
     ['장보기', [...changes.values()].filter(row => row.before !== row.after)]
   ];
+  const retained = showRetainedShopping
+    ? next.filter(row => changes.get(row.ingredient_id).before === row.shortage)
+    : [];
   return <div className="change-summary">{groups.map(([label, rows]) =>
     <section key={label}>
       {rows.length ? <>
@@ -100,7 +103,38 @@ export function ChangeSummary({preview}) {
         </li>)}</ul>
       </> : <p>{label} 변동 없음</p>}
     </section>
-  )}{Boolean(preview.meal_changes?.length)&&<section><h3>식사 상태 변화</h3><ul>{preview.meal_changes.map(row=>
+  )}{retained.length > 0 && <section>
+    <h3>그대로 살 재료</h3>
+    <ul>{retained.map(row => <li key={row.ingredient_id}>
+      <b>{row.name}</b><span>{formatAmount(row.shortage)}{unitLabels[row.unit]} 유지</span>
+    </li>)}</ul>
+  </section>}{Boolean(preview.meal_changes?.length)&&<section><h3>식사 상태 변화</h3><ul>{preview.meal_changes.map(row=>
     <li key={row.id}><b>{row.date} {row.name}</b><span>{statusLabels[row.before]} → <strong>{statusLabels[row.after]}</strong></span></li>
   )}</ul></section>}</div>;
+}
+
+export function MealPlanReview({preview, workspace}) {
+  const plan = preview.command.payload;
+  const previous = workspace.meals.find(meal => meal.id === plan.id);
+  const recipe = previous?.recipe_id === plan.recipe_id
+    ? previous.recipe
+    : workspace.recipes.find(item => item.id === plan.recipe_id);
+  const manual = workspace.manual.filter(item => !item.archived && !item.checked);
+
+  return <>
+    <div className="change-summary">
+      <section>
+        <h3>{plan.date} {slotLabels[plan.slot]} · {formatAmount(plan.servings)}인분</h3>
+        <p>{previous ? <>{previous.recipe.name} → </> : '새 예정 식사 · '}<strong>{preview.planned_recipe?.name || recipe?.name}</strong></p>
+      </section>
+    </div>
+    <ChangeSummary preview={preview} showRetainedShopping/>
+    {manual.length > 0 && <details className="change-summary">
+      <summary>직접 적은 장보기 {manual.length}건 유지</summary>
+      <ul>{manual.map(item => <li key={item.id}>
+        <b>{item.name}</b><span>{formatAmount(item.quantity)}{item.unit}</span>
+      </li>)}</ul>
+    </details>}
+    <p className="fineprint">재고 수량은 그대로 유지돼요. 실제 사용한 양은 조리 완료에서 기록할 수 있어요.</p>
+  </>;
 }
